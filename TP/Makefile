@@ -4,7 +4,7 @@ SERVER = server
 
 # Compilador e flags
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c11
+CFLAGS = -Wall -Wextra -std=c11 -D_POSIX_C_SOURCE=200112L
 
 # Arquivos fonte e cabeçalhos
 COMMON_SRC = common.c

@@ -1,85 +1,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <unistd.h>
-#include <netdb.h>  // Incluir este cabeçalho para usar getaddrinfo
-#include "common.h"
+#include <arpa/inet.h>
+#include <sys/socket.h> 
+#include <sys/types.h>  
+#include <sys/select.h> 
+#include <errno.h>
 
-int configure_socket(const char *socket_type, int port) {
-    int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sockfd < 0)
-        error("ERROR opening socket");
+#define MAX_CLIENTS 10
+#define BUFFER_SIZE 500
 
-    // Configurar SO_REUSEADDR
-    int opt = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
-        error("ERROR setting SO_REUSEADDR");
-
-    struct sockaddr_in serv_addr;
-    memset(&serv_addr, 0, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-    serv_addr.sin_port = htons(port);
-
-    if (bind(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
-        error("ERROR on binding");
-
-    listen(sockfd, 5);
-    printf("Servidor aguardando conexões %s na porta %d...\n", socket_type, port);
-
-    return sockfd;
+void error(const char *msg) {
+    perror(msg);
+    exit(EXIT_FAILURE);
 }
 
-void connect_peer_or_listen(int *peer_sock, const char *hostname, int port) {
-    struct sockaddr_in serv_addr;
-    struct addrinfo hints, *res;
-
-    // Preencher a estrutura 'hints' para configurar getaddrinfo
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;        // IPv4
-    hints.ai_socktype = SOCK_STREAM; // TCP
-
-    // Obtém as informações do host usando getaddrinfo
-    if (getaddrinfo(hostname, NULL, &hints, &res) != 0) {
-        error("ERROR resolving host");
-    }
-
-    *peer_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (*peer_sock < 0)
-        error("ERROR opening peer socket");
-
-    // Configurar o endereço do peer
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr = ((struct sockaddr_in *)res->ai_addr)->sin_addr;
-    serv_addr.sin_port = htons(port);
-
-    freeaddrinfo(res); // Liberar a memória de getaddrinfo
-
-    printf("Tentando conectar ao peer...\n");
-    if (connect(*peer_sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        printf("Falha na conexão. Escutando na porta %d como peer.\n", port);
-
-        close(*peer_sock);
-        *peer_sock = configure_socket("peer-to-peer", port);
-
-        struct sockaddr_in cli_addr;
-        socklen_t clilen = sizeof(cli_addr);
-        int newsockfd = accept(*peer_sock, (struct sockaddr *)&cli_addr, &clilen);
-        if (newsockfd < 0)
-            error("ERROR on peer accept");
-
-        printf("Conexão peer-to-peer estabelecida.\n");
-        close(newsockfd);
-    } else {
-        printf("Conexão peer-to-peer estabelecida com sucesso!\n");
-    }
-}
+void handle_message(int socket, const char *source);
 
 int main(int argc, char *argv[]) {
-    if (argc < 3) {
+    if (argc != 3) {
         fprintf(stderr, "usage: %s <peer_port> <client_port>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
@@ -87,41 +27,108 @@ int main(int argc, char *argv[]) {
     int peer_port = atoi(argv[1]);  // Porta para peer-to-peer (40000)
     int client_port = atoi(argv[2]);  // Porta para clientes (50000 ou 60000)
 
-    // Conexão peer-to-peer
-    int peer_sock;
-    connect_peer_or_listen(&peer_sock, "127.0.0.1", peer_port);
+    int peer_socket, client_socket, active_peer_socket = -1;
+    struct sockaddr_in peer_addr, client_addr;
 
-    // Configurar socket para clientes
-    int client_sock = configure_socket("user/location", client_port);
+    // Socket to peer-to-peer connection
+    if ((peer_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+        error("Peer socket failed");
 
-    // Loop para aceitar conexões de clientes
-    while (1) {
-        struct sockaddr_in cli_addr;
-        socklen_t clilen = sizeof(cli_addr);
-        int newsockfd = accept(client_sock, (struct sockaddr *)&cli_addr, &clilen);
-        if (newsockfd < 0)
-            error("ERROR on accept");
+    memset(&peer_addr, 0, sizeof(peer_addr));
+    peer_addr.sin_family = AF_INET;
+    peer_addr.sin_addr.s_addr = INADDR_ANY;
+    peer_addr.sin_port = htons(peer_port);
 
-        printf("Conexão com cliente estabelecida na porta %d.\n", client_port);
+    // Try active connection mode
+    int peer_connection = connect(peer_socket, (struct sockaddr*)&peer_addr, sizeof(peer_addr));
+    if (peer_connection < 0) {
+        printf("No peer found, starting to listen...\n");
 
-        char buffer[BUFFER_SIZE];
-        memset(buffer, 0, BUFFER_SIZE);
+        // passive connection mode
+        if (bind(peer_socket, (struct sockaddr*)&peer_addr, sizeof(peer_addr)) < 0)
+            error("Erro ao fazer bind no peer socket");
 
-        // Receber mensagem do cliente
-        if (recv(newsockfd, buffer, BUFFER_SIZE - 1, 0) < 0)
-            error("ERROR reading from client socket");
+        if (listen(peer_socket, MAX_CLIENTS) < 0) 
+            error("Erro ao fazer listen no peer socket");
 
-        printf("Mensagem do cliente: %s\n", buffer);
-
-        // Enviar resposta
-        const char *response = "Mensagem processada com sucesso!";
-        if (send(newsockfd, response, strlen(response), 0) < 0)
-            error("ERROR writing to client socket");
-
-        close(newsockfd);
+    } else {
+        // active connection mode
+        printf("Conexão peer-to-peer estabelecida (modo ativo).\n");
+        active_peer_socket = peer_socket;
     }
 
-    close(peer_sock);
-    close(client_sock);
-    return EXIT_SUCCESS;
+    // Socket for client connection
+    if ((client_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+        error("Client socket failed");
+
+    memset(&client_addr, 0, sizeof(client_addr));
+    client_addr.sin_family = AF_INET;
+    client_addr.sin_addr.s_addr = INADDR_ANY;
+    client_addr.sin_port = htons(client_port);
+
+    if (bind(client_socket, (struct sockaddr *)&client_addr, sizeof(client_addr)) < 0)
+        error("Client bind failed");
+
+    if (listen(client_socket, MAX_CLIENTS) < 0)
+        error("Client listen failed");
+
+    printf("Client socket listening on port %d\n", client_port);
+
+
+    fd_set read_fds;
+    int max_fd = (peer_socket > client_socket) ? peer_socket : client_socket;
+
+     while (1) {
+        FD_ZERO(&read_fds);
+        if (active_peer_socket > 0)
+            FD_SET(active_peer_socket, &read_fds);
+        else
+            FD_SET(peer_socket, &read_fds);
+        FD_SET(client_socket, &read_fds);
+
+        int activity = select(max_fd + 1, &read_fds, NULL, NULL, NULL);
+        if (activity < 0) 
+            error("Erro no select");
+
+        // Verifica atividade no socket peer-to-peer
+        if (FD_ISSET(peer_socket, &read_fds) && active_peer_socket < 0) {
+            int new_peer_socket = accept(peer_socket, NULL, NULL);
+            if (new_peer_socket > 0) {
+                printf("Conexão recebida do peer.\n");
+                active_peer_socket = new_peer_socket;
+            }
+        } else if (FD_ISSET(active_peer_socket, &read_fds)) {
+            handle_message(active_peer_socket, "Peer");
+        }
+
+        // Verifica atividade no socket de clientes
+        if (FD_ISSET(client_socket, &read_fds)) {
+            int new_client_socket = accept(client_socket, NULL, NULL);
+            if (new_client_socket > 0) {
+                printf("Conexão recebida de cliente.\n");
+                handle_message(new_client_socket, "Client");
+            }
+        }
+    
+    }
+
+    close(peer_socket);
+    close(client_socket);
+    return 0;
+}
+
+void handle_message(int socket, const char *source) {
+    char buffer[BUFFER_SIZE];
+    memset(buffer, 0, BUFFER_SIZE);
+
+    ssize_t bytes_read = read(socket, buffer, BUFFER_SIZE);
+    if (bytes_read > 0) {
+        printf("[%s] Mensagem recebida: %s\n", source, buffer);
+        send(socket, "Mensagem recebida.", 18, 0);
+    } else if (bytes_read == 0) {
+        printf("[%s] Conexão fechada pelo cliente.\n", source);
+        close(socket);
+    } else {
+        error("Erro na leitura");
+    }
 }
