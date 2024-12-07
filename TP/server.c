@@ -37,8 +37,6 @@ void accept_new_client(int socket) {
     socklen_t addrlen = sizeof(client_addr);
     int new_client_socket = accept(socket, (struct sockaddr *)&client_addr, &addrlen);
 
-    printf("111\n");
-
     if (new_client_socket < 0){
         perror("Error accepting connection");
         return;
@@ -46,23 +44,19 @@ void accept_new_client(int socket) {
 
     if (client_count >= MAX_CLIENTS) {
         send_message(new_client_socket, ERROR, "09");
-        printf("09: Client limit exceeded. Conexão rejeitada.\n");
+        printf("Client limit exceeded\n");
         close(new_client_socket);
         return;
     }
 
-    
-    printf("2\n");
     // Read message
     Message msg;
     process_message(new_client_socket, &msg);
 
-    printf("3\n");
     int digit = atoi(msg.payload); 
     clients_sockets[digit] = new_client_socket;
     clients_loc_and_id[digit] = client_id;
     client_count++;
-
     printf("Client [%d] added (%d)\n", client_id,digit);
 
     // Envia a resposta de conexão com o ID do cliente
@@ -71,8 +65,6 @@ void accept_new_client(int socket) {
     send_message(new_client_socket, RES_CONN, res_conn_msg);
     
     client_id++;
-    
-    printf("4\n");
 }
 
 void process_client_messages(fd_set *read_fds) {
@@ -114,7 +106,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "usage: %s <peer_port> <client_port>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
-    int peer_port = atoi(argv[1]);  // Porta para peer-to-peer (40000)
+    //int peer_port = atoi(argv[1]);  // Porta para peer-to-peer (40000)
     int client_port = atoi(argv[2]);  // Porta para clientes (50000 ou 60000)
 
     // Socket for client connection

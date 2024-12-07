@@ -34,53 +34,34 @@ void handle_initial_registration(int user_socket, int location_socket, int locat
 }
 
 void handle_command_loop(int user_socket, int location_socket, int location_id) {
-    Message msg;  // Variável para armazenar a mensagem a ser enviada
-    Message response_msg;  // Variável para armazenar a resposta recebida
-    char response[BUFFER_SIZE];
+    char location_str[BUFFER_SIZE];
+    snprintf(location_str, sizeof(location_str), "%d", location_id);
+    Message msg; 
+    Message response_msg; 
 
     while (1) {
-        memset(&msg, 0, sizeof(msg));  // Limpar a mensagem
+        memset(&msg, 0, sizeof(msg));
 
-        // Ler mensagem do terminal
         printf("> ");
         if (fgets(msg.payload, sizeof(msg.payload), stdin) == NULL) {
             perror("Erro ao ler entrada");
             break;
         }
-
-        // Remover o '\n' no final da mensagem
         msg.payload[strcspn(msg.payload, "\n")] = '\0';
 
-        // Verificar comando para sair
-        if (strcmp(msg.payload, "exit") == 0) {
-            printf("Encerrando comunicação.\n");
-            break;
+        msg.code = -1;
+        if (strcmp(msg.payload, "kill") == 0){
+            msg.code = REQ_DISC;
+            strncpy(msg.payload, location_str, sizeof(msg.payload) - 1); 
+            msg.payload[sizeof(msg.payload) - 1] = '\0';
         }
 
-        // Definir o código da mensagem
-        msg.code = REQ_CONN;  // Defina o código conforme a necessidade, por exemplo, REQ_CONN
-
-        // Enviar a mensagem para ambos os servidores
         int sockets[] = {user_socket, location_socket};
         for (int i = 0; i < 2; i++) {
-            // Enviar a mensagem
-            if (send(sockets[i], &msg, sizeof(msg), 0) < 0) {
-                perror("Erro ao enviar mensagem");
-                break;
-            }
+            send_message(sockets[i], msg.code, msg.payload);
 
-            // Limpar a resposta
             memset(&response_msg, 0, sizeof(response_msg));
-
-            // Receber a resposta
-            int bytes_received = recv(sockets[i], &response_msg, sizeof(response_msg), 0);
-            if (bytes_received < 0) {
-                perror("Erro ao receber resposta");
-                break;
-            } else if (bytes_received == 0) {
-                printf("Servidor %d desconectado.\n", i + 1);
-                break;
-            }
+            process_message(sockets[i], &response_msg);
 
             // Exibir resposta do servidor
             printf("Resposta do servidor %d: Code=%d, Payload=%s\n", i + 1, response_msg.code, response_msg.payload);
