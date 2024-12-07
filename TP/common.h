@@ -10,6 +10,7 @@
 #include <sys/types.h>  
 #include <sys/select.h> 
 #include <errno.h>
+#include <time.h>
 
 #define REQ_CONNPEER  17
 #define RES_CONNPEER  18
@@ -42,7 +43,6 @@ typedef struct {
 } Message;
 
 void error(const char *msg);
-void process_message(int socket, Message *msg);
 void send_message(int socket, int code, const char *payload);
 
 #endif
