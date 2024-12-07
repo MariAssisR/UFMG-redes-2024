@@ -4,7 +4,7 @@ int location_id;
 int client_user_id;
 int client_loc_id;
 
-void client_process_message(int socket, Message *msg) {
+void client_process_message(Message *msg) {
     switch (msg->code) {
         case OK:
         {
@@ -59,7 +59,7 @@ void client_process_message(int socket, Message *msg) {
             break;
 
         case RES_CONN:
-            printf("Mensagem RES_CONN: %s\n", msg->payload);
+            //printf("Mensagem RES_CONN: %s\n", msg->payload);
             break;
 
         default:
@@ -98,17 +98,17 @@ void handle_initial_registration(int user_socket, int location_socket) {
     int valread = read(user_socket, &user_msg, sizeof(user_msg));
     if (valread <= 0) {
         perror("Error on read client message");
-        close(socket);
+        close(user_socket);
         return;
     }
-    client_process_message(user_socket, &user_msg);
+    client_process_message(&user_msg);
     valread = read(location_socket, &location_msg, sizeof(location_msg));
     if (valread <= 0) {
         perror("Error on read client message");
-        close(socket);
+        close(location_socket);
         return;
     }
-    client_process_message(location_socket, &location_msg);
+    client_process_message(&location_msg);
 
     printf("SU New ID: %s\n", user_msg.payload);
     printf("SL New ID: %s\n", location_msg.payload);
@@ -147,7 +147,7 @@ void handle_command_loop(int user_socket, int location_socket) {
         }
 
         int sockets[] = {user_socket, location_socket};
-        char **sockets_name = {"SU", "SL"};
+        char *sockets_name[] = {"SU", "SL"};
         int locs[] = {client_user_id, client_loc_id};
         for (int i = 0; i < 2; i++) {
             Message msg_to_send = msg;
@@ -160,10 +160,11 @@ void handle_command_loop(int user_socket, int location_socket) {
                 int valread = read(sockets[i], &response_msg, sizeof(response_msg));
                 if (valread <= 0) {
                     perror("Error on read client message");
-                    close(socket);
+                    close(sockets[i]);
                     return;
                 }
-                client_process_message(sockets[i], &response_msg);
+                printf("%s ", sockets_name[i]);
+                client_process_message(&response_msg);
 
                 close(sockets[i]);
 
@@ -197,7 +198,7 @@ void handle_command_loop(int user_socket, int location_socket) {
                     close(sockets[i]);
                     return;
                 }
-                client_process_message(sockets[i], &response_msg);
+                client_process_message(&response_msg);
 
                 continue;
                 
@@ -225,7 +226,7 @@ void handle_command_loop(int user_socket, int location_socket) {
                     close(sockets[i]);
                     return;
                 }
-                client_process_message(sockets[i], &response_msg);
+                client_process_message(&response_msg);
             }
             else if (strcmp(command, "in") == 0) {
                 //DEIXA ASSIM POR ENQUANTO!
@@ -239,7 +240,7 @@ void handle_command_loop(int user_socket, int location_socket) {
                     close(sockets[i]);
                     return;
                 }
-                client_process_message(sockets[i], &response_msg);
+                client_process_message(&response_msg);
             }
             else if (strcmp(command, "out") == 0) {
                 //DEIXA ASSIM POR ENQUANTO!
@@ -252,7 +253,7 @@ void handle_command_loop(int user_socket, int location_socket) {
                     close(sockets[i]);
                     return;
                 }
-                client_process_message(sockets[i], &response_msg);
+                client_process_message(&response_msg);
             }
             else if (strcmp(command, "inspect") == 0) {
                 //DEIXA ASSIM POR ENQUANTO!
@@ -265,7 +266,7 @@ void handle_command_loop(int user_socket, int location_socket) {
                     close(sockets[i]);
                     return;
                 }
-                client_process_message(sockets[i], &response_msg);
+                client_process_message(&response_msg);
             }
         }
     }
