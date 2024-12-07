@@ -137,12 +137,13 @@ void handle_command_loop(int user_socket, int location_socket) {
             payload++;
 
         if (strcmp( command, "kill") != 0 && 
-        strcmp( command, "add") != 0 && 
-        strcmp( command, "find") != 0 && 
-        strcmp( command, "in") != 0 && 
-        strcmp( command, "out") != 0 && 
-        strcmp( command, "inspect") != 0){
-            printf("Wrong command, options: kill, add, find, in, out, inspect\n");
+        strcmp( command, "add") != 0 &&
+        strcmp( command, "find") != 0 ) 
+        //strcmp( command, "in") != 0 && 
+        //strcmp( command, "out") != 0 && 
+        //strcmp( command, "inspect") != 0)
+        {
+            printf("Wrong command, options: kill, add\n");
             continue;
         }
 
