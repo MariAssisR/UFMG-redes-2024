@@ -5,13 +5,33 @@
 
 int clients_sockets[MAX_CLIENTS] = {0};            // pos é LOC, num é SOCKET
 int clients_loc_and_id[MAX_CLIENTS] = {0};         // pos é LOC, num é ID
-int client_id;               // ID do cliente inicial (aleatório)
+int client_id;                                     // ID do cliente inicial (aleatório)
 int client_count = 0;                              // Contador de clientes conectados
 int user_ids[MAX_USERS] = {0};                     // IDs dos usuários
 int user_special[MAX_USERS] = {0};                 // 0, 1 (especialidade do usuário)
 int user_location[MAX_USERS] = {0};                // Localização do usuário (de -1, 1 a 10)
+int user_count = 0; 
 
-int client_exists(int id){
+int user_find_pos(){
+    if(user_count < MAX_USERS){
+        for (int i = 0; i < MAX_USERS; i++){
+            if (user_ids[i] == 0)
+                return i;
+        }
+    }
+    perror("Client limit exceeded\n");
+    return -1;
+}
+
+int user_exists_and_pos(int id){
+    for (int i = 0; i < MAX_USERS; i++){
+        if (user_ids[i] == id)
+            return i;
+    }
+    return -1;
+}
+
+int client_exists_and_pos(int id){
     for (int i = 0; i < MAX_CLIENTS; i++){
         if (clients_loc_and_id[i] == id)
             return i;
@@ -100,10 +120,10 @@ void server_process_message(int socket, Message *msg) {
 
         case REQ_DISC:
             digit = atoi(msg->payload); 
-            int client_loc = client_exists(digit);
+            int client_loc = client_exists_and_pos(digit);
             if(client_loc != -1){
                 printf("Client %d removed (Loc %d)\n", digit, client_loc);
-                send_message(socket, OK, "01");
+                send_message(socket, OK, "1");
                 client_remove(client_loc);
             }
             else{
@@ -112,10 +132,38 @@ void server_process_message(int socket, Message *msg) {
             break;
 
         case REQ_USRADD:
+            int uid_add = atoi(strtok(msg->payload, ","));
+            digit = atoi(strtok(NULL, ","));
+
+            int user_pos_add = user_exists_and_pos(uid_add);
+            if(user_pos_add != -1){
+                user_special[user_pos_add] = digit;
+                send_message(socket, OK, "03");
+            }
+            else{
+                if(user_count >= MAX_USERS)
+                    send_message(socket, ERROR, "17");
+
+                int user_new_pos_add = user_find_pos();
+                user_ids[user_new_pos_add] = uid_add;
+                user_special[user_new_pos_add] = digit;
+                user_count++;
+                send_message(socket, OK, "02");
+            }
             break;
             
         case REQ_USRLOC:
-            
+            int uid_find = atoi(msg->payload);
+            int user_pos_find = user_exists_and_pos(uid_find);
+
+            if(user_pos_find != -1){
+                char res_conn_msg[BUFFER_SIZE];
+                snprintf(res_conn_msg, sizeof(res_conn_msg), "%d", user_location[user_pos_find]);
+                send_message(socket, RES_USRLOC, res_conn_msg);
+            }
+            else{
+                send_message(socket, ERROR, "18");
+            }
             break;
 
         default:
@@ -185,7 +233,6 @@ void handle_client_messages(fd_set *read_fds) {
                 printf("Client %d disconnected\n", clients_loc_and_id[i]);
                 client_remove(i);
             } else {
-                printf("Message from client %d: Code=%d, Payload=%s\n", sd, msg.code, msg.payload);
                 server_process_message(sd, &msg);
             }
         }

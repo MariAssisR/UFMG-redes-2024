@@ -55,8 +55,11 @@ void client_process_message(int socket, Message *msg) {
                     printf("Mensagem de erro recebida: %s\n", msg->payload);
                     break;
             }
-            exit(EXIT_FAILURE);
         }
+            break;
+
+        case RES_CONN:
+            printf("Mensagem RES_CONN: %s\n", msg->payload);
             break;
 
         default:
@@ -128,75 +131,140 @@ void handle_command_loop(int user_socket, int location_socket) {
         msg.payload[strcspn(msg.payload, "\n")] = '\0';
         msg.code = 1;
 
-        if (strcmp(msg.payload, "kill") != 0 && 
-        strcmp(msg.payload, "add") != 0 && 
-        strcmp(msg.payload, "find") != 0 && 
-        strcmp(msg.payload, "in") != 0 && 
-        strcmp(msg.payload, "out") != 0 && 
-        strcmp(msg.payload, "inspect") != 0){
+        char *command = strtok(msg.payload, " ");
+        char *payload = command ? command + strlen(command) + 1 : NULL;
+        if (payload && payload[0] == ' ')
+            payload++;
+
+        if (strcmp( command, "kill") != 0 && 
+        strcmp( command, "add") != 0 && 
+        strcmp( command, "find") != 0 && 
+        strcmp( command, "in") != 0 && 
+        strcmp( command, "out") != 0 && 
+        strcmp( command, "inspect") != 0){
             printf("Wrong command, options: kill, add, find, in, out, inspect\n");
             continue;
         }
 
         int sockets[] = {user_socket, location_socket};
+        char **sockets_name = {"SU", "SL"};
         int locs[] = {client_user_id, client_loc_id};
         for (int i = 0; i < 2; i++) {
             Message msg_to_send = msg;
-            if (strcmp(msg_to_send.payload, "kill") == 0) {
+            if (strcmp(command, "kill") == 0) {
                 msg_to_send.code = REQ_DISC;
-                char id[BUFFER_SIZE];
-                snprintf(id, sizeof(id), "%d", locs[i]);
-                strncpy(msg_to_send.payload, id, sizeof(msg_to_send.payload) - 1);
-                msg_to_send.payload[sizeof(msg_to_send.payload) - 1] = '\0';
+                snprintf(msg_to_send.payload, sizeof(msg_to_send.payload), "%d", locs[i]);
 
                 send_message(sockets[i], msg_to_send.code, msg_to_send.payload);
-
                 memset(&response_msg, 0, sizeof(response_msg));
+                int valread = read(sockets[i], &response_msg, sizeof(response_msg));
+                if (valread <= 0) {
+                    perror("Error on read client message");
+                    close(socket);
+                    return;
+                }
                 client_process_message(sockets[i], &response_msg);
 
-                printf("SU Successful disconnect\n");
                 close(sockets[i]);
+
                 if(i == 1)
-                    exit(EXIT_SUCCESS);;
+                    exit(EXIT_SUCCESS);
             }
-            else if (strcmp(msg_to_send.payload, "add") == 0) {
+            else if (strcmp(command, "add") == 0) {
+                if(i == 1)
+                    continue;
+
                 msg_to_send.code = REQ_USRADD;
-                char id[BUFFER_SIZE];
-                snprintf(id, sizeof(id), "%d", locs[i]);
-                strncpy(msg_to_send.payload, id, sizeof(msg_to_send.payload) - 1);
-                msg_to_send.payload[sizeof(msg_to_send.payload) - 1] = '\0';
+
+                char uid[11];
+                int number;
+                if (payload == NULL || sscanf(payload, "%10s %d", uid, &number) != 2) {
+                    printf("Comando 'add' requer um UID de 10 dígitos e um número inteiro. Exemplo: add 2021808080 42\n");
+                    continue;
+                }
+                if (strlen(uid) != 10 || strspn(uid, "0123456789") != 10) {
+                    printf("UID inválido. Deve conter exatamente 10 dígitos numéricos.\n");
+                    continue;
+                }
+
+                snprintf(msg_to_send.payload, sizeof(msg_to_send.payload), "%s,%d", uid, number);
 
                 send_message(sockets[i], msg_to_send.code, msg_to_send.payload);
-
                 memset(&response_msg, 0, sizeof(response_msg));
+                int valread = read(sockets[i], &response_msg, sizeof(response_msg));
+                if (valread <= 0) {
+                    perror("Error on read client message");
+                    close(sockets[i]);
+                    return;
+                }
                 client_process_message(sockets[i], &response_msg);
 
-                printf("SU Successful disconnect\n");
-                close(sockets[i]);
-                if(i == 1)
-                    exit(EXIT_SUCCESS);;
+                continue;
+                
             }
-            else if (strcmp(msg_to_send.payload, "find") == 0) {
+            else if (strcmp(command, "find") == 0) {
+                if (i == 0) // Enviar somente para o servidor SL (índice 1)
+                    continue;
+
                 msg_to_send.code = REQ_USRLOC;
-                char id[BUFFER_SIZE];
-                snprintf(id, sizeof(id), "%d", locs[i]);
-                strncpy(msg_to_send.payload, id, sizeof(msg_to_send.payload) - 1);
+
+                if (payload == NULL || strlen(payload) != 10 || strspn(payload, "0123456789") != 10) {
+                    printf("Comando 'find' requer um UID de 10 dígitos numéricos. Exemplo: find 2021808080\n");
+                    continue;
+                }
+
+                strncpy(msg_to_send.payload, payload, sizeof(msg_to_send.payload) - 1);
                 msg_to_send.payload[sizeof(msg_to_send.payload) - 1] = '\0';
 
+                
                 send_message(sockets[i], msg_to_send.code, msg_to_send.payload);
-
                 memset(&response_msg, 0, sizeof(response_msg));
+                int valread = read(sockets[i], &response_msg, sizeof(response_msg));
+                if (valread <= 0) {
+                    perror("Error on read client message");
+                    close(sockets[i]);
+                    return;
+                }
                 client_process_message(sockets[i], &response_msg);
-
-                printf("SU Successful disconnect\n");
-                close(sockets[i]);
-                if(i == 1)
-                    exit(EXIT_SUCCESS);;
             }
-            else{
+            else if (strcmp(command, "in") == 0) {
+                //DEIXA ASSIM POR ENQUANTO!
+                printf("AWUI\n");
                 send_message(sockets[i], msg_to_send.code, msg_to_send.payload);
 
                 memset(&response_msg, 0, sizeof(response_msg));
+                int valread = read(sockets[i], &response_msg, sizeof(response_msg));
+                if (valread <= 0) {
+                    perror("Error on read client message");
+                    close(sockets[i]);
+                    return;
+                }
+                client_process_message(sockets[i], &response_msg);
+            }
+            else if (strcmp(command, "out") == 0) {
+                //DEIXA ASSIM POR ENQUANTO!
+                send_message(sockets[i], msg_to_send.code, msg_to_send.payload);
+
+                memset(&response_msg, 0, sizeof(response_msg));
+                int valread = read(sockets[i], &response_msg, sizeof(response_msg));
+                if (valread <= 0) {
+                    perror("Error on read client message");
+                    close(sockets[i]);
+                    return;
+                }
+                client_process_message(sockets[i], &response_msg);
+            }
+            else if (strcmp(command, "inspect") == 0) {
+                //DEIXA ASSIM POR ENQUANTO!
+                send_message(sockets[i], msg_to_send.code, msg_to_send.payload);
+
+                memset(&response_msg, 0, sizeof(response_msg));
+                int valread = read(sockets[i], &response_msg, sizeof(response_msg));
+                if (valread <= 0) {
+                    perror("Error on read client message");
+                    close(sockets[i]);
+                    return;
+                }
                 client_process_message(sockets[i], &response_msg);
             }
         }
