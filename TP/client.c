@@ -34,68 +34,46 @@ void handle_initial_registration(int user_socket, int location_socket, int locat
 }
 
 void handle_command_loop(int user_socket, int location_socket, int location_id) {
-    char buffer[BUFFER_SIZE];
+    Message msg;  // Variável para armazenar a mensagem a ser enviada
+    Message response_msg;  // Variável para armazenar a resposta recebida
     char response[BUFFER_SIZE];
 
     while (1) {
-        // memset(buffer, 0, BUFFER_SIZE);
-        // memset(user_response, 0, BUFFER_SIZE);
-        // memset(location_response, 0, BUFFER_SIZE);
-
-        // printf("Enter a command to send (or 'kill' to disconnect): ");
-        // fgets(buffer, BUFFER_SIZE, stdin);
-
-        // if (strcmp(buffer, "kill") == 0) {
-        //     handle_disconnection(user_socket, location_socket, location_id);
-        //     break;
-        // }
-
-        // char *buf2 = buffer;
-        // send_message_2(user_socket, buf2);
-        // send_message_2(location_socket, buffer);
-
-        // printf("aqui");
-        // receive_response(user_socket, user_response);
-        // receive_response(location_socket, location_response);
-
-        // printf("SU Response: %s\n", user_response);
-        // printf("SL Response: %s\n", location_response);
-
-        // Limpar buffer de entrada
-        memset(buffer, 0, BUFFER_SIZE);
+        memset(&msg, 0, sizeof(msg));  // Limpar a mensagem
 
         // Ler mensagem do terminal
         printf("> ");
-        if (fgets(buffer, BUFFER_SIZE, stdin) == NULL) {
+        if (fgets(msg.payload, sizeof(msg.payload), stdin) == NULL) {
             perror("Erro ao ler entrada");
             break;
         }
 
         // Remover o '\n' no final da mensagem
-        buffer[strcspn(buffer, "\n")] = '\0';
-        printf("1\n");
+        msg.payload[strcspn(msg.payload, "\n")] = '\0';
 
         // Verificar comando para sair
-        if (strcmp(buffer, "exit") == 0) {
+        if (strcmp(msg.payload, "exit") == 0) {
             printf("Encerrando comunicação.\n");
             break;
         }
-        printf("2\n");
+
+        // Definir o código da mensagem
+        msg.code = REQ_CONN;  // Defina o código conforme a necessidade, por exemplo, REQ_CONN
 
         // Enviar a mensagem para ambos os servidores
         int sockets[] = {user_socket, location_socket};
         for (int i = 0; i < 2; i++) {
-            printf("3\n");
-            if (send(sockets[i], buffer, strlen(buffer), 0) < 0) {
+            // Enviar a mensagem
+            if (send(sockets[i], &msg, sizeof(msg), 0) < 0) {
                 perror("Erro ao enviar mensagem");
                 break;
             }
-            printf("4\n");
 
-            // Receber resposta do servidor atual
-            printf("5\n");
-            memset(response, 0, BUFFER_SIZE);
-            int bytes_received = recv(sockets[i], response, BUFFER_SIZE - 1, 0);
+            // Limpar a resposta
+            memset(&response_msg, 0, sizeof(response_msg));
+
+            // Receber a resposta
+            int bytes_received = recv(sockets[i], &response_msg, sizeof(response_msg), 0);
             if (bytes_received < 0) {
                 perror("Erro ao receber resposta");
                 break;
@@ -103,11 +81,9 @@ void handle_command_loop(int user_socket, int location_socket, int location_id) 
                 printf("Servidor %d desconectado.\n", i + 1);
                 break;
             }
-            printf("6\n");
 
             // Exibir resposta do servidor
-            response[bytes_received] = '\0';
-            printf("Servidor %d: %s\n", i + 1, response);
+            printf("Resposta do servidor %d: Code=%d, Payload=%s\n", i + 1, response_msg.code, response_msg.payload);
         }
     }
 }
@@ -124,19 +100,16 @@ int main(int argc, char *argv[]) {
     int location_id = atoi(argv[4]);
 
     if (location_id < 1 || location_id > 10)
-        error("Invalid location ID. Must be between 1 and 10.\n");
+        error("Invalid argument\n");
 
-    // Conectar aos servidores
+    // Connect to servers
     int user_socket = connect_to_server(server_ip, user_server_port);
-    printf("Connected to user server at %s:%d\n", server_ip, user_server_port);
-
     int location_socket = connect_to_server(server_ip, location_server_port);
-    printf("Connected to location server at %s:%d\n", server_ip, location_server_port);
 
-    // Registrar cliente nos servidores
+    // Register client to servers
     handle_initial_registration(user_socket, location_socket, location_id);
 
-    // Iniciar loop de envio de comandos
+    // Loop for commands
     handle_command_loop(user_socket, location_socket, location_id);
 
     // Fechar conexões

@@ -15,21 +15,67 @@ void process_message(int socket, Message *msg) {
 
     switch (msg->code) {
         case OK:
-            // Processar a resposta de sucesso
-            printf("Mensagem OK recebida: %s\n", msg->payload);
+        {
+            int digit = atoi(msg->payload); 
+            switch (digit) {
+                case 1:
+                    printf("Successful disconnect\n");
+                    break;
+                case 2:
+                    printf("Successful create\n");
+                    break;
+                case 3:
+                    printf("Successful update\n");
+                    break;
+                default: 
+                    printf("Mensagem OK recebida: %s\n", msg->payload);
+                    break;
+            }
+        }
             break;
 
         case ERROR:
-            // Processar mensagem de erro
-            printf("Mensagem de erro recebida: %s\n", msg->payload);
-            break;
-
-        case REQ_CONN:
-            // Processar a solicitação de conexão (REQ_CONN - código 20)
-            
+        {
+            int digit = atoi(msg->payload); 
+            switch (digit) {
+                case 1:
+                    printf("Peer limit exceeded\n");
+                    break;
+                case 2:
+                    printf("Peer not found\n");
+                    break;
+                case 9:
+                    printf("Client limit exceeded\n");
+                    break;
+                case 10:
+                    printf("Client not found\n");
+                    break;
+                case 17:
+                    printf("User limit exceeded\n");
+                    break;
+                case 18:
+                    printf("User not found\n");
+                    break;
+                case 19:
+                    printf("Permission denied\n");
+                    break;
+                default: 
+                    printf("Mensagem de erro recebida: %s\n", msg->payload);
+                    break;
+            }
+            exit(EXIT_FAILURE);
+        }
             break;
 
         case RES_CONN:
+            // Processar a resposta de conexão (RES_CONN - código 21)
+            printf("Cliente conectado com ID: %s\n", msg->payload);
+            break;
+
+        case REQ_CONN:
+            break;
+
+        case REQ_DISC:
             // Processar a resposta de conexão (RES_CONN - código 21)
             printf("Cliente conectado com ID: %s\n", msg->payload);
             break;

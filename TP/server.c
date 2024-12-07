@@ -76,12 +76,12 @@ void accept_new_client(int socket) {
 }
 
 void process_client_messages(fd_set *read_fds) {
-    char buffer[BUFFER_SIZE];
+    Message msg; // Variável para armazenar a mensagem recebida
 
     for (int i = 0; i < MAX_CLIENTS; i++) {
         int sd = clients_sockets[i];
         if (FD_ISSET(sd, read_fds)) {
-            int valread = read(sd, buffer, BUFFER_SIZE);
+            int valread = read(sd, &msg, sizeof(msg));  // Ler a estrutura Message
             if (valread == 0) {
                 printf("Client [%d] disconnected\n", clients_loc_and_id[i]);
                 close(sd);
@@ -89,17 +89,25 @@ void process_client_messages(fd_set *read_fds) {
                 clients_loc_and_id[i] = 0;
                 client_count--;
             } else {
-                buffer[valread] = '\0'; // Null terminate the string
-                printf("Message from client %d: %s\n", sd, buffer);
+                printf("Message from client %d: Code=%d, Payload=%s\n", sd, msg.code, msg.payload);
 
-                // Respond to the client
-                char *message = "Message received by server!\n";
-                send(sd, message, strlen(message), 0);
+                // Processar a mensagem de acordo com o código
+                switch (msg.code) {
+                    case REQ_CONN:
+                        // Responder com uma mensagem de sucesso para a conexão
+                        snprintf(msg.payload, sizeof(msg.payload), "Connection request received!");
+                        send(sd, &msg, sizeof(msg), 0);
+                        break;
+                    default:
+                        // Caso o código seja desconhecido, enviar uma mensagem de erro
+                        snprintf(msg.payload, sizeof(msg.payload), "Unknown request");
+                        send(sd, &msg, sizeof(msg), 0);
+                        break;
+                }
             }
         }
     }
 }
-
 int main(int argc, char *argv[]) {
     // Initial config
     if (argc != 3) {
