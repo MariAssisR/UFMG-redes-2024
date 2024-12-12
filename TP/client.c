@@ -143,7 +143,7 @@ void handle_command_loop(int user_socket, int location_socket) {
         //strcmp( command, "out") != 0 && 
         //strcmp( command, "inspect") != 0)
         {
-            printf("Wrong command, options: kill, add\n");
+            printf("Wrong command, options: kill, add, find\n");
             continue;
         }
 

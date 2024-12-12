@@ -173,25 +173,21 @@ void server_process_message(int socket, Message *msg) {
     }
 }
 
-int create_socket(int port) {
-    int server_socket;
-    struct sockaddr_in server_addr;
+void handle_client_messages(fd_set *read_fds) {
+    Message msg; // Variável para armazenar a mensagem recebida
 
-    if ((server_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
-        error("Socket creation failed");
-
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(port);
-
-    if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
-        error("Bind failed");
-
-    if (listen(server_socket, MAX_CLIENTS) < 0)
-        error("Listen failed");
-
-    return server_socket;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        int sd = clients_sockets[i];
+        if (FD_ISSET(sd, read_fds)) {
+            int valread = read(sd, &msg, sizeof(msg));  // Ler a estrutura Message
+            if (valread == 0) {
+                printf("Client %d disconnected\n", clients_loc_and_id[i]);
+                client_remove(i);
+            } else {
+                server_process_message(sd, &msg);
+            }
+        }
+    }
 }
 
 void accept_new_client(int socket) {
@@ -222,35 +218,81 @@ void accept_new_client(int socket) {
     server_process_message(new_client_socket, &msg);
 }
 
-void handle_client_messages(fd_set *read_fds) {
-    Message msg; // Variável para armazenar a mensagem recebida
+int create_passive_connection(int port) {
+    int sock;
+    struct sockaddr_in server_addr;
 
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        int sd = clients_sockets[i];
-        if (FD_ISSET(sd, read_fds)) {
-            int valread = read(sd, &msg, sizeof(msg));  // Ler a estrutura Message
-            if (valread == 0) {
-                printf("Client %d disconnected\n", clients_loc_and_id[i]);
-                client_remove(i);
-            } else {
-                server_process_message(sd, &msg);
-            }
-        }
-    }
+    if ((sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+        error("Socket creation failed");
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+        error("Bind failed");
+
+    if (listen(sock, MAX_CLIENTS) < 0)
+        error("Listen failed");
+
+    return sock;
 }
+
+int create_passive_or_active_connection(const char *ip, int port) {
+    int sock = 0, new_socket;
+    struct sockaddr_in server_addr;
+    int addrlen = sizeof(server_addr);
+
+    // Try active connection
+    if ((sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+        error("Socket creation failed");
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+
+    if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0) 
+        error("Invalid address/ Address not supported");
+
+    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("No peer found, starting to listen...");
+        close(sock);
+
+        // Try passive connection
+        sock = create_passive_connection(port);
+        if (sock < 0)
+            return -1;
+
+        // Accept new connections
+        if ((new_socket = accept(sock, (struct sockaddr*)&server_addr, (socklen_t*)&addrlen)) < 0) {
+            perror("accept");
+            return -1;
+        }
+
+        sock = new_socket;
+    }
+
+    return sock;
+}
+
 int main(int argc, char *argv[]) {
     // Initial config
     if (argc != 3) {
         fprintf(stderr, "usage: %s <peer_port> <client_port>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
-    //int peer_port = atoi(argv[1]);  // Porta para peer-to-peer (40000)
+    
+    int peer_port = atoi(argv[1]);  // Porta para peer-to-peer (40000)
     int client_port = atoi(argv[2]);  // Porta para clientes (50000 ou 60000)
 
     // Socket for client connection
     srand(time(NULL));
     client_id = (rand() % 100) + 10;
-    int client_socket = create_socket(client_port);
+    int client_socket = create_passive_connection(client_port);
+
+    // Socket for peer connection
+    int peer_socket = create_passive_or_active_connection("127.0.0.1",peer_port);
 
     fd_set read_fds;
     while (1) {
@@ -283,7 +325,7 @@ int main(int argc, char *argv[]) {
     }
 
     close(client_socket);
-    //close(peer_socket);
+    close(peer_socket);
 
     return 0;
 }
