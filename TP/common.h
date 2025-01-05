@@ -36,6 +36,7 @@
 
 
 #define BUFFER_SIZE 500
+#define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
 typedef struct {
     int code;     
