@@ -2,17 +2,20 @@
 
 #define MAX_CLIENTS 10
 #define MAX_USERS 30
-#define MAX_PEERS 1
 
 int clients_sockets[MAX_CLIENTS] = {0};            // pos é LOC, num é SOCKET
 int clients_loc_and_id[MAX_CLIENTS] = {0};         // pos é LOC, num é ID
 int client_id;                                     // ID do cliente inicial (aleatório)
 int client_count = 0;                              // Contador de clientes conectados
 int user_ids[MAX_USERS] = {0};                     // IDs dos usuários
-int user_special[MAX_USERS] = {0};                 // 0, 1 (especialidade do usuário)
+int user_special[MAX_USERS] = {0};                 // 0 ou 1 (especialidade do usuário)
 int user_location[MAX_USERS] = {0};                // Localização do usuário (de -1, 1 a 10)
 int user_count = 0; 
-int peer_count = 0;
+
+int peer_id = -1;                                       // ID do peer que vai ser conectado
+int this_peer_id;
+enum peer_connection_state { DISC = 0, CONN = 1 };
+enum peer_connection_state peer_state;
 
 int user_find_pos(){
     if(user_count < MAX_USERS){
@@ -49,7 +52,7 @@ void client_remove(int loc_id){
 }
 
 void server_process_message(int socket, Message *msg) {
-    int digit;
+    int digit, msg_peer_id;
     switch (msg->code) {
         case OK:
         {
@@ -102,6 +105,43 @@ void server_process_message(int socket, Message *msg) {
             }
             exit(EXIT_FAILURE);
         }
+            break;
+
+        case REQ_CONNPEER:
+            if(peer_id == -1){ 
+                // not connected to other peer
+                peer_id = (rand() % 100) + 10;
+                printf("Peer %d connected\n", peer_id); 
+
+                char peer_id_str[BUFFER_SIZE];
+                snprintf(peer_id_str, sizeof(peer_id_str), "%d", peer_id);
+                send_message(socket, RES_CONNPEER, peer_id_str);
+                break;
+            }
+            send_message(socket, ERROR, "1");
+            break;
+
+        case RES_CONNPEER:
+            msg_peer_id = atoi(msg->payload); 
+            this_peer_id = msg_peer_id;
+            printf("New Peer ID: %d\n", this_peer_id);
+
+            if(peer_id == -1){
+                peer_id = (rand() % 100) + 10;
+                printf("Peer %d connected\n", peer_id); 
+            }
+            break;
+
+        case REQ_DISCPEER:
+            msg_peer_id = atoi(msg->payload); 
+            if (msg_peer_id == peer_id){
+                printf("Peer %d disconnected\n", peer_id);
+                peer_id++; // change id of future new peer
+                send_message(socket, OK, "1");
+            }
+            else {
+                send_message(socket, ERROR, "2");
+            }
             break;
 
         case REQ_CONN:
@@ -187,25 +227,38 @@ void send_peer_messages(int peer_socket, fd_set *read_fds) {
         msg.payload[strcspn(msg.payload, "\n")] = '\0';
         msg.code = 1;
 
-        send_message(peer_socket, msg.code, msg.payload);
+        char *command = strtok(msg.payload, " ");
+        if (strcmp( command, "kill") != 0){
+            printf("Wrong command, option: kill\n");
+            return;
+        }
+
+        char this_peer_id_str[BUFFER_SIZE];
+        snprintf(this_peer_id_str, sizeof(this_peer_id_str), "%d", this_peer_id);
+        send_message(peer_socket, REQ_DISCPEER, this_peer_id_str);
+        // Read message
+        Message msg;
+        int valread = read(peer_socket, &msg, sizeof(msg));
+        if (valread <= 0) {
+            perror("Error on read client message");
+            close(peer_socket);
+            return;
+        }
+        server_process_message(peer_socket, &msg);  
+        exit(EXIT_SUCCESS);
     }
 }
 
 void handle_peer_messages(int peer_socket) {
     Message msg;
     int valread = read(peer_socket, &msg, sizeof(msg));
-    printf("Mensagem de texto: %d\n", msg.code);
 
     if (valread == 0) {
-        printf("Peer TESTE desconectado\n");
-        close(peer_socket);
-        // Remover o socket da lista de clientes
-    } else if (valread < 0) {
+        error("Erro igual a 0 ao ler do socket");
+    } else if (valread < 0)
         perror("Erro ao ler do socket");
-    }
     else
-        printf("ESTOU AQUI\n");
-    
+        server_process_message(peer_socket, &msg);   
 }
 
 void handle_client_messages(fd_set *read_fds) {
@@ -253,7 +306,7 @@ void accept_new_client(int socket) {
     server_process_message(new_client_socket, &msg);
 }
 
-int create_client_connection(int port) {
+int create_socket(int port, int client){
     int sock;
     struct sockaddr_in server_addr;
 
@@ -265,60 +318,72 @@ int create_client_connection(int port) {
     server_addr.sin_port = htons(port);
     server_addr.sin_addr.s_addr = INADDR_ANY;
 
-    if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
-        error("Bind failed");
+    int opt = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0){
+        close(sock);
+        error("setsockopt failed");
+    }
 
-    if (listen(sock, MAX_CLIENTS) < 0)
-        error("Listen failed");
+    if(client){
+        if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0){
+            close(sock);
+            error("Bind failed");
+        }
 
+        if (listen(sock, MAX_CLIENTS) < 0){
+            close(sock);
+            error("Listen failed");
+        }
+    }
     return sock;
 }
 
-int create_p2p_connection(int port) {
-    
-    int sock = 0, new_socket;
-    int opt = 1;
+int create_passive_connection(int port){
+    int socket = create_socket(port, 0);
+    if (socket < 0) return -1;
+
     struct sockaddr_in server_addr;
     int addrlen = sizeof(server_addr);
-
-    if ((sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
-        error("Socket creation failed");
-
-    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)))
-        error("setsockopt");
 
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
 
-    // Try active connection
-    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        close(sock);
-
-        // Try passive connection
-        if ((sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
-            error("Socket creation failed");
-        
-        if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0){
-            printf("Peer limit exceeded\n");
-            error("Bind failed");
-        }
-
-        printf("No peer found, starting to listen...\n");
-        if (listen(sock, MAX_CLIENTS) < 0)
-            error("Listen failed");
-
-        // Accept new connections
-        if ((new_socket = accept(sock, (struct sockaddr*)&server_addr, (socklen_t*)&addrlen)) < 0) {
-            perror("accept");
-            return -1;
-        }
-
-        close(sock);
-        sock = new_socket;
+    if (bind(socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0){
+        error("Bind failed");
+        close(socket);
+        return -1;
     }
 
-    return sock;
+    printf("No peer found, starting to listen...\n");
+    if (listen(socket, MAX_CLIENTS) < 0) {
+        perror("Listen failed");
+        close(socket);
+        return -1;
+    }
+
+    // Accept new connections
+    int new_socket;
+    if ((new_socket = accept(socket, (struct sockaddr*)&server_addr, (socklen_t*)&addrlen)) < 0) {
+        perror("accept");
+        close(socket);
+        return -1;
+    }
+    return new_socket;
+}
+
+int create_active_connection(int port, int socket){
+    struct sockaddr_in server_addr;
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (connect(socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) == 0)
+        return 0;
+    return -1;
 }
 
 int main(int argc, char *argv[]) {
@@ -331,55 +396,101 @@ int main(int argc, char *argv[]) {
     int peer_port = atoi(argv[1]);  // Porta para peer-to-peer (40000)
     int client_port = atoi(argv[2]);  // Porta para clientes (50000 ou 60000)
 
-    // Socket for client connection
+    // Random ids
     srand(time(NULL));
     client_id = (rand() % 100) + 10;
-    int client_socket = create_client_connection(client_port);
 
-    // Socket for peer connection
-    int peer_socket = create_p2p_connection(peer_port);
+    // Socket for connection
+    int client_socket = create_socket(client_port, 1);
+    int peer_socket = create_socket(peer_port, 0);
+
+    peer_state = DISC;
 
     fd_set read_fds, client_read_fds;
     while (1) {
-        FD_ZERO(&read_fds);
-        FD_ZERO(&client_read_fds);
-        FD_SET(client_socket, &read_fds);
-        FD_SET(peer_socket, &read_fds);
-        FD_SET(STDIN_FILENO, &read_fds);
+        if(peer_state == DISC){
+            if(create_active_connection(peer_port,peer_socket) == 0){
+                peer_state = CONN;
 
-        int max_sd = MAX(MAX(client_socket, peer_socket), STDIN_FILENO);
+                send_message(peer_socket, REQ_CONNPEER, "");
+                
+                Message msg = read_message(peer_socket);
+                server_process_message(peer_socket, &msg);
 
-        // Add active clients to the fd_set
-        for (int i = 0; i < MAX_CLIENTS; i++) {
-            int sd = clients_sockets[i];
-            if (sd > 0) {
-                FD_SET(sd, &read_fds);
-                FD_SET(sd, &client_read_fds);
-                max_sd = MAX(max_sd, sd);
+                
+                char peer_id_str[BUFFER_SIZE];
+                snprintf(peer_id_str, sizeof(peer_id_str), "%d", peer_id);
+                send_message(peer_socket, RES_CONNPEER, peer_id_str);
+                
+                continue;
+            }
+            else {
+                close(peer_socket);
+                peer_socket = create_passive_connection(peer_port);
+                if(peer_socket < 0)
+                    continue;
+                
+                peer_state = CONN;
+
+                Message msg;
+                int valread = read(peer_socket, &msg, sizeof(msg));
+                if (valread <= 0) {
+                    close(peer_socket);
+                    perror("Error on read peer message");
+                }
+                server_process_message(peer_socket, &msg);
+
+                valread = read(peer_socket, &msg, sizeof(msg));
+                if (valread <= 0) {
+                    close(peer_socket);
+                    perror("Error on read peer message");
+                }
+                server_process_message(peer_socket, &msg);
+                
+                continue;
             }
         }
+        else {
+            FD_ZERO(&read_fds);
+            FD_ZERO(&client_read_fds);
+            FD_SET(client_socket, &read_fds);
+            FD_SET(peer_socket, &read_fds);
+            FD_SET(STDIN_FILENO, &read_fds);
 
-        int activity = select(max_sd + 1, &read_fds, NULL, NULL, NULL);
-        if (activity < 0 && errno != EINTR)
-            error("Error in select");
+            int max_sd = MAX(MAX(client_socket, peer_socket), STDIN_FILENO);
 
-        // Handle new client connection
-        if (FD_ISSET(client_socket, &read_fds)) {
-            accept_new_client(client_socket);
+            // Add active clients to the fd_set
+            for (int i = 0; i < MAX_CLIENTS; i++) {
+                int sd = clients_sockets[i];
+                if (sd > 0) {
+                    FD_SET(sd, &read_fds);
+                    FD_SET(sd, &client_read_fds);
+                    max_sd = MAX(max_sd, sd);
+                }
+            }
+
+            int activity = select(max_sd + 1, &read_fds, NULL, NULL, NULL);
+            if (activity < 0 && errno != EINTR)
+                error("Error in select");
+
+            // Handle new client connection
+            if (FD_ISSET(client_socket, &read_fds)) {
+                accept_new_client(client_socket);
+            }
+            
+            // Send message to server
+            if (FD_ISSET(STDIN_FILENO, &read_fds)) {
+                send_peer_messages(peer_socket, &read_fds);
+            }
+
+            // Handle server messages
+            if (FD_ISSET(peer_socket, &read_fds)) {
+                handle_peer_messages(peer_socket);
+            }
+
+            // Handle client messages
+            handle_client_messages(&client_read_fds);
         }
-        
-        // Send message to server
-        if (FD_ISSET(STDIN_FILENO, &read_fds)) {
-            send_peer_messages(peer_socket, &read_fds);
-        }
-
-        // Handle server messages
-        if (FD_ISSET(peer_socket, &read_fds)) {
-            handle_peer_messages(peer_socket);
-        }
-
-        // Handle client messages
-        handle_client_messages(&client_read_fds);
     }
 
     close(client_socket);

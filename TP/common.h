@@ -45,5 +45,6 @@ typedef struct {
 
 void error(const char *msg);
 void send_message(int socket, int code, const char *payload);
+Message read_message(int socket);
 
 #endif

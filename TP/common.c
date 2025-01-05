@@ -14,3 +14,13 @@ void send_message(int socket, int code, const char *payload) {
         perror("Erro ao enviar mensagem");
     }
 }
+
+Message read_message(int socket){
+    Message msg;
+    msg.code = -1;
+    int valread = read(socket, &msg, sizeof(msg));
+    if (valread <= 0) {
+        perror("Error on read client message");
+    }
+    return msg;
+}
