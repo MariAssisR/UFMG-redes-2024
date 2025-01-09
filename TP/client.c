@@ -61,6 +61,12 @@ void client_process_message(Message *msg) {
         case RES_CONN:
             //printf("Mensagem RES_CONN: %s\n", msg->payload);
             break;
+        
+        case RES_USRACCESS:
+            printf("AQUI \n");
+            int loc_id = atoi(msg->payload);
+            printf("OK, Last location: %d\n", loc_id);
+            break;
 
         default:
             // Caso a mensagem tenha um código desconhecido
@@ -88,26 +94,13 @@ int connect_to_server(const char *server_ip, int port) {
 }
 
 void handle_initial_registration(int user_socket, int location_socket) {
-    char location_str[BUFFER_SIZE];
-    snprintf(location_str, sizeof(location_str), "%d", location_id);
-    send_message(user_socket, REQ_CONN, location_str);
-    send_message(location_socket, REQ_CONN, location_str);
-
-    Message user_msg;
-    Message location_msg;
-    int valread = read(user_socket, &user_msg, sizeof(user_msg));
-    if (valread <= 0) {
-        perror("Error on read client message");
-        close(user_socket);
-        return;
-    }
+    send_message_with_int_payload(user_socket, REQ_CONN, location_id);
+    send_message_with_int_payload(location_socket, REQ_CONN, location_id);
+    
+    Message user_msg = read_message(user_socket);
     client_process_message(&user_msg);
-    valread = read(location_socket, &location_msg, sizeof(location_msg));
-    if (valread <= 0) {
-        perror("Error on read client message");
-        close(location_socket);
-        return;
-    }
+    
+    Message location_msg = read_message(location_socket);
     client_process_message(&location_msg);
 
     printf("SU New ID: %s\n", user_msg.payload);
@@ -138,12 +131,12 @@ void handle_command_loop(int user_socket, int location_socket) {
 
         if (strcmp( command, "kill") != 0 && 
         strcmp( command, "add") != 0 &&
-        strcmp( command, "find") != 0 ) 
-        //strcmp( command, "in") != 0 && 
-        //strcmp( command, "out") != 0 && 
-        //strcmp( command, "inspect") != 0)
+        strcmp( command, "find") != 0 &&
+        strcmp( command, "in") != 0 && 
+        strcmp( command, "out") != 0 && 
+        strcmp( command, "inspect") != 0)
         {
-            printf("Wrong command, options: kill, add, find\n");
+            printf("Wrong command, options: kill, add, find, in, out, inspect\n");
             continue;
         }
 
@@ -152,31 +145,22 @@ void handle_command_loop(int user_socket, int location_socket) {
         int locs[] = {client_user_id, client_loc_id};
         for (int i = 0; i < 2; i++) {
             Message msg_to_send = msg;
+            memset(&response_msg, 0, sizeof(response_msg));
+                
             if (strcmp(command, "kill") == 0) {
-                msg_to_send.code = REQ_DISC;
-                snprintf(msg_to_send.payload, sizeof(msg_to_send.payload), "%d", locs[i]);
-
-                send_message(sockets[i], msg_to_send.code, msg_to_send.payload);
-                memset(&response_msg, 0, sizeof(response_msg));
-                int valread = read(sockets[i], &response_msg, sizeof(response_msg));
-                if (valread <= 0) {
-                    perror("Error on read client message");
-                    close(sockets[i]);
-                    return;
-                }
+                send_message_with_int_payload(sockets[i], REQ_DISC, locs[i]);
+                
+                response_msg = read_message(sockets[i]);
                 printf("%s ", sockets_name[i]);
                 client_process_message(&response_msg);
 
                 close(sockets[i]);
-
                 if(i == 1)
                     exit(EXIT_SUCCESS);
             }
             else if (strcmp(command, "add") == 0) {
                 if(i == 1)
                     continue;
-
-                msg_to_send.code = REQ_USRADD;
 
                 char uid[11];
                 int number;
@@ -188,72 +172,57 @@ void handle_command_loop(int user_socket, int location_socket) {
                     printf("UID inválido. Deve conter exatamente 10 dígitos numéricos.\n");
                     continue;
                 }
-
                 snprintf(msg_to_send.payload, sizeof(msg_to_send.payload), "%s,%d", uid, number);
 
-                send_message(sockets[i], msg_to_send.code, msg_to_send.payload);
-                memset(&response_msg, 0, sizeof(response_msg));
-                int valread = read(sockets[i], &response_msg, sizeof(response_msg));
-                if (valread <= 0) {
-                    perror("Error on read client message");
-                    close(sockets[i]);
-                    return;
-                }
+                send_message(sockets[i], REQ_USRADD, msg_to_send.payload);
+                response_msg = read_message(sockets[i]);
                 client_process_message(&response_msg);
 
                 continue;
                 
             }
             else if (strcmp(command, "find") == 0) {
-                if (i == 0) // Enviar somente para o servidor SL (índice 1)
+                if (i == 0)
                     continue;
-
-                msg_to_send.code = REQ_USRLOC;
 
                 if (payload == NULL || strlen(payload) != 10 || strspn(payload, "0123456789") != 10) {
                     printf("Comando 'find' requer um UID de 10 dígitos numéricos. Exemplo: find 2021808080\n");
                     continue;
                 }
-
                 strncpy(msg_to_send.payload, payload, sizeof(msg_to_send.payload) - 1);
                 msg_to_send.payload[sizeof(msg_to_send.payload) - 1] = '\0';
 
                 
-                send_message(sockets[i], msg_to_send.code, msg_to_send.payload);
-                memset(&response_msg, 0, sizeof(response_msg));
-                int valread = read(sockets[i], &response_msg, sizeof(response_msg));
-                if (valread <= 0) {
-                    perror("Error on read client message");
-                    close(sockets[i]);
-                    return;
-                }
+                send_message(sockets[i], REQ_USRLOC, msg_to_send.payload);
+                response_msg = read_message(sockets[i]);
                 client_process_message(&response_msg);
             }
             else if (strcmp(command, "in") == 0) {
-                //DEIXA ASSIM POR ENQUANTO!
-                printf("AWUI\n");
-                send_message(sockets[i], msg_to_send.code, msg_to_send.payload);
-
-                memset(&response_msg, 0, sizeof(response_msg));
-                int valread = read(sockets[i], &response_msg, sizeof(response_msg));
-                if (valread <= 0) {
-                    perror("Error on read client message");
-                    close(sockets[i]);
-                    return;
+                if(i == 1)
+                    continue;
+                
+                if (payload == NULL || strlen(payload) != 10 || strspn(payload, "0123456789") != 10) {
+                    printf("Comando 'in' requer um UID de 10 dígitos numéricos. Exemplo: in 2021808080\n");
+                    continue;
                 }
+                snprintf(msg_to_send.payload, sizeof(msg_to_send.payload), "%s,in,%d", payload,location_id);
+                
+                send_message(sockets[i], REQ_USRACCESS, msg_to_send.payload);
+                response_msg = read_message(sockets[i]);
                 client_process_message(&response_msg);
             }
             else if (strcmp(command, "out") == 0) {
-                //DEIXA ASSIM POR ENQUANTO!
-                send_message(sockets[i], msg_to_send.code, msg_to_send.payload);
-
-                memset(&response_msg, 0, sizeof(response_msg));
-                int valread = read(sockets[i], &response_msg, sizeof(response_msg));
-                if (valread <= 0) {
-                    perror("Error on read client message");
-                    close(sockets[i]);
-                    return;
+                if(i == 1)
+                    continue;
+                
+                if (payload == NULL || strlen(payload) != 10 || strspn(payload, "0123456789") != 10) {
+                    printf("Comando 'out' requer um UID de 10 dígitos numéricos. Exemplo: out 2021808080\n");
+                    continue;
                 }
+                snprintf(msg_to_send.payload, sizeof(msg_to_send.payload), "%s,out,%d", payload,location_id);
+                
+                send_message(sockets[i], REQ_USRACCESS, msg_to_send.payload);
+                response_msg = read_message(sockets[i]);
                 client_process_message(&response_msg);
             }
             else if (strcmp(command, "inspect") == 0) {

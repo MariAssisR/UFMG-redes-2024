@@ -1,5 +1,6 @@
 #include "common.h"
 
+#define MAX_PEERS 1
 #define MAX_CLIENTS 10
 #define MAX_USERS 30
 
@@ -7,16 +8,27 @@ int clients_sockets[MAX_CLIENTS] = {0};            // pos é LOC, num é SOCKET
 int clients_loc_and_id[MAX_CLIENTS] = {0};         // pos é LOC, num é ID
 int client_id;                                     // ID do cliente inicial (aleatório)
 int client_count = 0;                              // Contador de clientes conectados
+
 int user_ids[MAX_USERS] = {0};                     // IDs dos usuários
 int user_special[MAX_USERS] = {0};                 // 0 ou 1 (especialidade do usuário)
 int user_location[MAX_USERS] = {0};                // Localização do usuário (de -1, 1 a 10)
 int user_count = 0; 
 
 int peer_id = -1;                                       // ID do peer que vai ser conectado
-int this_peer_id;
+int this_peer_id = -1;
 enum peer_connection_state { DISC = 0, CONN = 1 };
 enum peer_connection_state peer_state;
+int client_socket, peer_socket;
 
+//functions
+void handle_client_messages(int fd);
+void handle_peer_connection(int peer_port, int *peer_socket);
+void accept_new_client(int socket);
+int create_socket(int port, int client);
+int create_passive_connection(int port, int socket);
+int create_active_connection(int port, int socket);
+
+//aux functions
 int user_find_pos(){
     if(user_count < MAX_USERS){
         for (int i = 0; i < MAX_USERS; i++){
@@ -52,14 +64,15 @@ void client_remove(int loc_id){
 }
 
 void server_process_message(int socket, Message *msg) {
-    int digit, msg_peer_id;
+    int digit, msg_peer_id, client_loc;
     switch (msg->code) {
         case OK:
         {
             int digit = atoi(msg->payload); 
             switch (digit) {
                 case 1:
-                    printf("Successful disconnect\n");
+                    close(peer_socket);
+                    exit(EXIT_FAILURE);
                     break;
                 case 2:
                     printf("Successful create\n");
@@ -109,44 +122,45 @@ void server_process_message(int socket, Message *msg) {
 
         case REQ_CONNPEER:
             if(peer_id == -1){ 
-                // not connected to other peer
                 peer_id = (rand() % 100) + 10;
                 printf("Peer %d connected\n", peer_id); 
 
-                char peer_id_str[BUFFER_SIZE];
-                snprintf(peer_id_str, sizeof(peer_id_str), "%d", peer_id);
-                send_message(socket, RES_CONNPEER, peer_id_str);
+                send_message_with_int_payload(socket, RES_CONNPEER, peer_id);
                 break;
             }
             send_message(socket, ERROR, "1");
             break;
 
         case RES_CONNPEER:
-            msg_peer_id = atoi(msg->payload); 
-            this_peer_id = msg_peer_id;
+            this_peer_id = atoi(msg->payload);  
             printf("New Peer ID: %d\n", this_peer_id);
 
             if(peer_id == -1){
                 peer_id = (rand() % 100) + 10;
                 printf("Peer %d connected\n", peer_id); 
+                send_message_with_int_payload(socket, RES_CONNPEER, peer_id);
             }
             break;
 
         case REQ_DISCPEER:
             msg_peer_id = atoi(msg->payload); 
             if (msg_peer_id == peer_id){
+                send_message(peer_socket, OK, "1");
                 printf("Peer %d disconnected\n", peer_id);
-                peer_id++; // change id of future new peer
-                send_message(socket, OK, "1");
+                peer_id = -1;
+                this_peer_id = -1;
+                peer_state = DISC;
+                sleep(1);
             }
-            else {
+            else 
                 send_message(socket, ERROR, "2");
-            }
+            
             break;
 
         case REQ_CONN:
             digit = atoi(msg->payload); 
             clients_sockets[digit] = socket;
+            printf("%d\n", socket);
             clients_loc_and_id[digit] = client_id;
             client_count++;
             printf("Client %d added (Loc %d)\n", client_id,digit);
@@ -162,7 +176,7 @@ void server_process_message(int socket, Message *msg) {
 
         case REQ_DISC:
             digit = atoi(msg->payload); 
-            int client_loc = client_exists_and_pos(digit);
+            client_loc = client_exists_and_pos(digit);
             if(client_loc != -1){
                 printf("Client %d removed (Loc %d)\n", digit, client_loc);
                 send_message(socket, OK, "1");
@@ -199,82 +213,79 @@ void server_process_message(int socket, Message *msg) {
             int user_pos_find = user_exists_and_pos(uid_find);
 
             if(user_pos_find != -1){
-                char res_conn_msg[BUFFER_SIZE];
-                snprintf(res_conn_msg, sizeof(res_conn_msg), "%d", user_location[user_pos_find]);
-                send_message(socket, RES_USRLOC, res_conn_msg);
+                char res_find_msg[BUFFER_SIZE];
+                snprintf(res_find_msg, sizeof(res_find_msg), "%d", user_location[user_pos_find]);
+                send_message(socket, RES_USRLOC, res_find_msg);
             }
             else{
                 send_message(socket, ERROR, "18");
             }
             break;
 
-        default:
-            // Caso a mensagem tenha um código desconhecido
-            printf("Mensagem desconhecida recebida: %s\n", msg->payload);
-            break;
-    }
-}
+        case REQ_USRACCESS:
+            printf("req user access: %s\n", msg->payload);
+        
+            int uid_access = atoi(strtok(msg->payload, ","));
+            char* direction = strtok(NULL, ",");
+            client_loc = atoi(strtok(NULL, ","));
 
-void send_peer_messages(int peer_socket, fd_set *read_fds) {
-    Message msg;
-    memset(&msg, 0, sizeof(msg));
-    
-    if (FD_ISSET(STDIN_FILENO, read_fds)) { 
-        if (fgets(msg.payload, sizeof(msg.payload), stdin) == NULL) {
-            perror("Erro ao ler entrada");
-            return;
-        }
-        msg.payload[strcspn(msg.payload, "\n")] = '\0';
-        msg.code = 1;
+            int user_pos_access = user_exists_and_pos(uid_access);
+            printf("ALOU: %d", user_pos_access);
+            if(user_pos_access != -1){
+                int locId = -1;
+                if (strcmp(direction, "in") == 0) 
+                    locId = client_loc;
 
-        char *command = strtok(msg.payload, " ");
-        if (strcmp( command, "kill") != 0){
-            printf("Wrong command, option: kill\n");
-            return;
-        }
+                char res_access_msg[BUFFER_SIZE];
+                snprintf(res_access_msg, sizeof(res_access_msg), "%d,%d,%d", uid_access, locId, client_loc);
 
-        char this_peer_id_str[BUFFER_SIZE];
-        snprintf(this_peer_id_str, sizeof(this_peer_id_str), "%d", this_peer_id);
-        send_message(peer_socket, REQ_DISCPEER, this_peer_id_str);
-        // Read message
-        Message msg;
-        int valread = read(peer_socket, &msg, sizeof(msg));
-        if (valread <= 0) {
-            perror("Error on read client message");
-            close(peer_socket);
-            return;
-        }
-        server_process_message(peer_socket, &msg);  
-        exit(EXIT_SUCCESS);
-    }
-}
-
-void handle_peer_messages(int peer_socket) {
-    Message msg;
-    int valread = read(peer_socket, &msg, sizeof(msg));
-
-    if (valread == 0) {
-        error("Erro igual a 0 ao ler do socket");
-    } else if (valread < 0)
-        perror("Erro ao ler do socket");
-    else
-        server_process_message(peer_socket, &msg);   
-}
-
-void handle_client_messages(fd_set *read_fds) {
-    Message msg; // Variável para armazenar a mensagem recebida
-
-    for (int i = 0; i < MAX_CLIENTS; i++) {
-        int sd = clients_sockets[i];
-        if (FD_ISSET(sd, read_fds)) {
-            int valread = read(sd, &msg, sizeof(msg));  // Ler a estrutura Message
-            if (valread == 0) {
-                printf("Client %d disconnected\n", clients_loc_and_id[i]);
-                client_remove(i);
-            } else {
-                server_process_message(sd, &msg);
+                send_message(peer_socket, REQ_LOCREG, res_access_msg);
             }
-        }
+            else{
+                send_message(socket, ERROR, "18");
+            }
+            break;
+
+        case REQ_LOCREG:
+            printf("req loc reg: %s\n", msg->payload);
+
+            int uid_loc = atoi(strtok(msg->payload, ","));
+            int loc = atoi(strtok(NULL, ","));
+            client_loc = atoi(strtok(NULL, ","));
+
+            int user_pos_loc = user_exists_and_pos(uid_loc);
+            printf("TETES: %d", user_pos_loc);
+            if(user_pos_loc == -1){   
+                int new_user_pos_loc = user_find_pos(uid_loc);
+                user_ids[new_user_pos_loc] = uid_loc;
+                user_location[new_user_pos_loc] = loc;
+                char res_req_loc_msg[BUFFER_SIZE];
+                snprintf(res_req_loc_msg, sizeof(res_req_loc_msg), "-1,%d", client_loc);
+                send_message(peer_socket, RES_LOCREG, res_req_loc_msg);
+            }
+            else{
+                user_location[user_pos_loc] = loc;
+                char res_req_loc_msg[BUFFER_SIZE];
+                snprintf(res_req_loc_msg, sizeof(res_req_loc_msg), "%d,%d", loc,client_loc);
+                send_message(peer_socket, RES_LOCREG, res_req_loc_msg);
+            }
+                
+            break;
+
+        case RES_LOCREG:
+            int loc_id = atoi(strtok(msg->payload, ","));
+            client_loc = atoi(strtok(NULL, ","));
+
+            char res_loc_msg[BUFFER_SIZE];
+            snprintf(res_loc_msg, sizeof(res_loc_msg), "%d", loc_id);
+            send_message(clients_sockets[client_loc], RES_USRACCESS, res_loc_msg);
+                
+            break;
+
+        default:
+            printf("Message with unknow code: %s\n", msg->payload);
+            exit(EXIT_SUCCESS);
+            break;
     }
 }
 
@@ -284,7 +295,7 @@ void accept_new_client(int socket) {
     int new_client_socket = accept(socket, (struct sockaddr *)&client_addr, &addrlen);
 
     if (new_client_socket < 0){
-        perror("Error accepting connection");
+        error("Error accepting connection");
         return;
     }
 
@@ -294,54 +305,70 @@ void accept_new_client(int socket) {
         close(new_client_socket);
         return;
     }
-
-    // Read message
-    Message msg;
-    int valread = read(new_client_socket, &msg, sizeof(msg));
-    if (valread <= 0) {
-        perror("Error on read client message");
-        close(socket);
-        return;
-    }
+    
+    Message msg = read_message(new_client_socket);
     server_process_message(new_client_socket, &msg);
+}
+
+void handle_client_messages(int fd) {
+    Message msg;
+    int valread = read(fd, &msg, sizeof(msg));
+    if (valread == 0) {
+        printf("Client %d disconnected\n", clients_loc_and_id[fd]);
+        client_remove(fd);
+    } else {
+        server_process_message(fd, &msg);
+    }
+}
+
+void handle_peer_connection(int peer_port, int *peer_socket) {
+    if (peer_state == DISC) {
+        // Try active connection
+        if (create_active_connection(peer_port, *peer_socket) == 0) {
+            peer_state = CONN;
+            send_message(*peer_socket, REQ_CONNPEER, "");
+        } else {
+            // Fallback to passive connection
+            close(*peer_socket);
+
+            *peer_socket = create_socket(peer_port,0);
+            int new_socket = create_passive_connection(peer_port, *peer_socket);
+            if (new_socket >= 0) {
+                close(*peer_socket);
+                *peer_socket = new_socket;
+                peer_state = CONN;
+
+            }
+        }
+    }
 }
 
 int create_socket(int port, int client){
     int sock;
-    struct sockaddr_in server_addr;
-
+    
     if ((sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
         error("Socket creation failed");
 
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-
-    int opt = 1;
-    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0){
-        close(sock);
-        error("setsockopt failed");
-    }
-
     if(client){
-        if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0){
-            close(sock);
-            error("Bind failed");
-        }
+        struct sockaddr_in server_addr;
+    
+        memset(&server_addr, 0, sizeof(server_addr));
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(port);
+        server_addr.sin_addr.s_addr = INADDR_ANY;
 
-        if (listen(sock, MAX_CLIENTS) < 0){
-            close(sock);
+        if (bind(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
+            error("Bind failed");
+
+        if (listen(sock, MAX_CLIENTS) < 0)
             error("Listen failed");
-        }
     }
+    
+    printf("debbuger: SOCK no CREATE: %d\n", sock);
     return sock;
 }
 
-int create_passive_connection(int port){
-    int socket = create_socket(port, 0);
-    if (socket < 0) return -1;
-
+int create_passive_connection(int port, int socket){
     struct sockaddr_in server_addr;
     int addrlen = sizeof(server_addr);
 
@@ -351,24 +378,20 @@ int create_passive_connection(int port){
     server_addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0){
-        error("Bind failed");
         close(socket);
-        return -1;
+        error("Bind failed");
     }
 
     printf("No peer found, starting to listen...\n");
-    if (listen(socket, MAX_CLIENTS) < 0) {
-        perror("Listen failed");
+    if (listen(socket, MAX_PEERS) < 0) {
         close(socket);
-        return -1;
+        error("Listen failed");
     }
 
-    // Accept new connections
     int new_socket;
     if ((new_socket = accept(socket, (struct sockaddr*)&server_addr, (socklen_t*)&addrlen)) < 0) {
-        perror("accept");
         close(socket);
-        return -1;
+        error("Accept");
     }
     return new_socket;
 }
@@ -376,14 +399,17 @@ int create_passive_connection(int port){
 int create_active_connection(int port, int socket){
     struct sockaddr_in server_addr;
 
+    printf("debbuger: port %d socket %d\n", port, socket);
+
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
-    server_addr.sin_addr.s_addr = INADDR_ANY;
 
-    if (connect(socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) == 0)
-        return 0;
-    return -1;
+    if (connect(socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0){
+        perror("Connection failed");
+        return -1;
+    }
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
@@ -401,95 +427,70 @@ int main(int argc, char *argv[]) {
     client_id = (rand() % 100) + 10;
 
     // Socket for connection
-    int client_socket = create_socket(client_port, 1);
-    int peer_socket = create_socket(peer_port, 0);
+    client_socket = create_socket(client_port, 1);
+    peer_socket = create_socket(peer_port, 0);
 
     peer_state = DISC;
-
-    fd_set read_fds, client_read_fds;
+    fd_set read_fds;
     while (1) {
-        if(peer_state == DISC){
-            if(create_active_connection(peer_port,peer_socket) == 0){
-                peer_state = CONN;
-
-                send_message(peer_socket, REQ_CONNPEER, "");
-                
-                Message msg = read_message(peer_socket);
-                server_process_message(peer_socket, &msg);
-
-                
-                char peer_id_str[BUFFER_SIZE];
-                snprintf(peer_id_str, sizeof(peer_id_str), "%d", peer_id);
-                send_message(peer_socket, RES_CONNPEER, peer_id_str);
-                
-                continue;
-            }
-            else {
-                close(peer_socket);
-                peer_socket = create_passive_connection(peer_port);
-                if(peer_socket < 0)
-                    continue;
-                
-                peer_state = CONN;
-
-                Message msg;
-                int valread = read(peer_socket, &msg, sizeof(msg));
-                if (valread <= 0) {
-                    close(peer_socket);
-                    perror("Error on read peer message");
-                }
-                server_process_message(peer_socket, &msg);
-
-                valread = read(peer_socket, &msg, sizeof(msg));
-                if (valread <= 0) {
-                    close(peer_socket);
-                    perror("Error on read peer message");
-                }
-                server_process_message(peer_socket, &msg);
-                
-                continue;
-            }
-        }
-        else {
+        handle_peer_connection(peer_port, &peer_socket);
+        
+        if(peer_state == CONN){
             FD_ZERO(&read_fds);
-            FD_ZERO(&client_read_fds);
             FD_SET(client_socket, &read_fds);
             FD_SET(peer_socket, &read_fds);
             FD_SET(STDIN_FILENO, &read_fds);
 
-            int max_sd = MAX(MAX(client_socket, peer_socket), STDIN_FILENO);
+            int max_fd = MAX(MAX(client_socket, peer_socket), STDIN_FILENO);
 
             // Add active clients to the fd_set
             for (int i = 0; i < MAX_CLIENTS; i++) {
-                int sd = clients_sockets[i];
-                if (sd > 0) {
-                    FD_SET(sd, &read_fds);
-                    FD_SET(sd, &client_read_fds);
-                    max_sd = MAX(max_sd, sd);
+                int fd = clients_sockets[i];
+                if (fd > 0) {
+                    FD_SET(fd, &read_fds);
+                    max_fd = MAX(max_fd, fd);
                 }
             }
 
-            int activity = select(max_sd + 1, &read_fds, NULL, NULL, NULL);
+            int activity = select(max_fd + 1, &read_fds, NULL, NULL, NULL);
             if (activity < 0 && errno != EINTR)
                 error("Error in select");
 
-            // Handle new client connection
-            if (FD_ISSET(client_socket, &read_fds)) {
-                accept_new_client(client_socket);
-            }
-            
-            // Send message to server
-            if (FD_ISSET(STDIN_FILENO, &read_fds)) {
-                send_peer_messages(peer_socket, &read_fds);
-            }
+            for (int fd = 0; fd <= max_fd; fd++) {
+                if (FD_ISSET(fd, &read_fds)) {
+                    if (fd == client_socket) {
+                        // Nova conexão de cliente
+                        accept_new_client(client_socket);
 
-            // Handle server messages
-            if (FD_ISSET(peer_socket, &read_fds)) {
-                handle_peer_messages(peer_socket);
-            }
+                    } else if (fd == STDIN_FILENO) {
+                        // Entrada do teclado (stdin)
+                        char command[BUFFER_SIZE];
+                        memset(&command, 0, sizeof(command));
 
-            // Handle client messages
-            handle_client_messages(&client_read_fds);
+                        if (fgets(command, sizeof(command), stdin) == NULL)
+                            continue;
+                
+                        command[strcspn(command, "\n")] = '\0';
+
+                        if (strcmp( command, "kill") != 0){
+                            fprintf(stderr, "Wrong command, option: kill\n");
+                            continue;
+                        }
+
+                        send_message_with_int_payload(peer_socket, REQ_DISCPEER, this_peer_id);
+
+                    } else if (fd == peer_socket) {
+                        // Mensagens do peer
+                        Message msg = read_message(peer_socket);
+                        server_process_message(peer_socket, &msg);
+
+                    } else {
+                        // Mensagens de clientes conectados
+                        handle_client_messages(fd);
+
+                    }
+                }
+            }
         }
     }
 
