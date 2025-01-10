@@ -3,15 +3,16 @@
 #define MAX_PEERS 1
 #define MAX_CLIENTS 10
 #define MAX_USERS 30
+#define NOT_SET_NUMBER -10
 
 int clients_sockets[MAX_CLIENTS] = {0};            // pos é LOC, num é SOCKET
 int clients_loc_and_id[MAX_CLIENTS] = {0};         // pos é LOC, num é ID
 int client_id;                                     // ID do cliente inicial (aleatório)
 int client_count = 0;                              // Contador de clientes conectados
 
-int user_ids[MAX_USERS] = {0};                     // IDs dos usuários
-int user_special[MAX_USERS] = {0};                 // 0 ou 1 (especialidade do usuário)
-int user_location[MAX_USERS] = {0};                // Localização do usuário (de -1, 1 a 10)
+int user_ids[MAX_USERS] = {NOT_SET_NUMBER};                     // IDs dos usuários
+int user_special[MAX_USERS] = {NOT_SET_NUMBER};                 // 0 ou 1 (especialidade do usuário)
+int user_location[MAX_USERS] = {NOT_SET_NUMBER};                // Localização do usuário (de -1, 1 a 10)
 int user_count = 0; 
 
 int peer_id = -1;                                       // ID do peer que vai ser conectado
@@ -20,8 +21,9 @@ enum peer_connection_state { DISC = 0, CONN = 1 };
 enum peer_connection_state peer_state;
 int client_socket, peer_socket;
 
+char list_of_users[BUFFER_SIZE] = "";
+
 //functions
-void handle_client_messages(int fd);
 void handle_peer_connection(int peer_port, int *peer_socket);
 void accept_new_client(int socket);
 int create_socket(int port, int client);
@@ -37,7 +39,7 @@ int user_find_pos(){
         }
     }
     perror("Client limit exceeded\n");
-    return -1;
+    return NOT_SET_NUMBER;
 }
 
 int user_exists_and_pos(int id){
@@ -45,7 +47,31 @@ int user_exists_and_pos(int id){
         if (user_ids[i] == id)
             return i;
     }
-    return -1;
+    return NOT_SET_NUMBER;
+}
+
+void get_list_of_users(int loc_id){
+    int list_of_positions_in_array[MAX_USERS];
+    int count = 0;
+    list_of_users[0] = '\0';
+
+    for(int i = 0; i < MAX_USERS; i++){
+        if(user_location[i] == loc_id){
+            list_of_positions_in_array[count] = i;
+            count++;
+        }
+    }
+
+    for(int i = 0; i < count; i++){
+        int user_id = user_ids[list_of_positions_in_array[i]];
+        char user_id_str[12];
+        sprintf(user_id_str, "%d", user_id);
+        strcat(list_of_users, user_id_str);
+        if (i < count - 1) {
+            strcat(list_of_users, ",");
+        }
+    }
+    strcat(list_of_users, "\0");
 }
 
 int client_exists_and_pos(int id){
@@ -53,7 +79,7 @@ int client_exists_and_pos(int id){
         if (clients_loc_and_id[i] == id)
             return i;
     }
-    return -1;
+    return NOT_SET_NUMBER;
 }
 
 void client_remove(int loc_id){
@@ -71,6 +97,8 @@ void server_process_message(int socket, Message *msg) {
             int digit = atoi(msg->payload); 
             switch (digit) {
                 case 1:
+                    printf("Successful disconnect\n");
+                    printf("Peer %d disconnect\n", peer_id);
                     close(peer_socket);
                     exit(EXIT_FAILURE);
                     break;
@@ -81,7 +109,7 @@ void server_process_message(int socket, Message *msg) {
                     printf("Successful update\n");
                     break;
                 default: 
-                    printf("Mensagem OK recebida: %s\n", msg->payload);
+                    printf("OK message received in server: %s\n", msg->payload);
                     break;
             }
         }
@@ -113,7 +141,7 @@ void server_process_message(int socket, Message *msg) {
                     printf("Permission denied\n");
                     break;
                 default: 
-                    printf("Mensagem de erro recebida: %s\n", msg->payload);
+                    printf("ERROR message received in server: %s\n", msg->payload);
                     break;
             }
             exit(EXIT_FAILURE);
@@ -160,7 +188,6 @@ void server_process_message(int socket, Message *msg) {
         case REQ_CONN:
             digit = atoi(msg->payload); 
             clients_sockets[digit] = socket;
-            printf("%d\n", socket);
             clients_loc_and_id[digit] = client_id;
             client_count++;
             printf("Client %d added (Loc %d)\n", client_id,digit);
@@ -177,7 +204,7 @@ void server_process_message(int socket, Message *msg) {
         case REQ_DISC:
             digit = atoi(msg->payload); 
             client_loc = client_exists_and_pos(digit);
-            if(client_loc != -1){
+            if(client_loc != NOT_SET_NUMBER){
                 printf("Client %d removed (Loc %d)\n", digit, client_loc);
                 send_message(socket, OK, "1");
                 client_remove(client_loc);
@@ -192,7 +219,7 @@ void server_process_message(int socket, Message *msg) {
             digit = atoi(strtok(NULL, ","));
 
             int user_pos_add = user_exists_and_pos(uid_add);
-            if(user_pos_add != -1){
+            if(user_pos_add != NOT_SET_NUMBER){
                 user_special[user_pos_add] = digit;
                 send_message(socket, OK, "03");
             }
@@ -212,10 +239,8 @@ void server_process_message(int socket, Message *msg) {
             int uid_find = atoi(msg->payload);
             int user_pos_find = user_exists_and_pos(uid_find);
 
-            if(user_pos_find != -1){
-                char res_find_msg[BUFFER_SIZE];
-                snprintf(res_find_msg, sizeof(res_find_msg), "%d", user_location[user_pos_find]);
-                send_message(socket, RES_USRLOC, res_find_msg);
+            if(user_pos_find != NOT_SET_NUMBER){
+                send_message_with_int_payload(socket, RES_USRLOC, user_location[user_pos_find]);
             }
             else{
                 send_message(socket, ERROR, "18");
@@ -223,23 +248,24 @@ void server_process_message(int socket, Message *msg) {
             break;
 
         case REQ_USRACCESS:
-            printf("req user access: %s\n", msg->payload);
-        
             int uid_access = atoi(strtok(msg->payload, ","));
             char* direction = strtok(NULL, ",");
             client_loc = atoi(strtok(NULL, ","));
 
             int user_pos_access = user_exists_and_pos(uid_access);
-            printf("ALOU: %d", user_pos_access);
-            if(user_pos_access != -1){
+            if(user_pos_access != NOT_SET_NUMBER){
                 int locId = -1;
                 if (strcmp(direction, "in") == 0) 
                     locId = client_loc;
 
                 char res_access_msg[BUFFER_SIZE];
-                snprintf(res_access_msg, sizeof(res_access_msg), "%d,%d,%d", uid_access, locId, client_loc);
+                snprintf(res_access_msg, sizeof(res_access_msg), "%d,%d", uid_access, locId);
 
                 send_message(peer_socket, REQ_LOCREG, res_access_msg);
+
+                Message msg_receive; 
+                msg_receive = read_message(peer_socket);
+                server_process_message(socket, &msg_receive);
             }
             else{
                 send_message(socket, ERROR, "18");
@@ -247,38 +273,70 @@ void server_process_message(int socket, Message *msg) {
             break;
 
         case REQ_LOCREG:
-            printf("req loc reg: %s\n", msg->payload);
-
             int uid_loc = atoi(strtok(msg->payload, ","));
             int loc = atoi(strtok(NULL, ","));
-            client_loc = atoi(strtok(NULL, ","));
 
             int user_pos_loc = user_exists_and_pos(uid_loc);
-            printf("TETES: %d", user_pos_loc);
-            if(user_pos_loc == -1){   
+            if(user_pos_loc == NOT_SET_NUMBER){   
                 int new_user_pos_loc = user_find_pos(uid_loc);
                 user_ids[new_user_pos_loc] = uid_loc;
                 user_location[new_user_pos_loc] = loc;
-                char res_req_loc_msg[BUFFER_SIZE];
-                snprintf(res_req_loc_msg, sizeof(res_req_loc_msg), "-1,%d", client_loc);
-                send_message(peer_socket, RES_LOCREG, res_req_loc_msg);
+                send_message(socket, RES_LOCREG, "-1");
             }
             else{
+                send_message_with_int_payload(socket, RES_LOCREG, user_location[user_pos_loc]);
                 user_location[user_pos_loc] = loc;
-                char res_req_loc_msg[BUFFER_SIZE];
-                snprintf(res_req_loc_msg, sizeof(res_req_loc_msg), "%d,%d", loc,client_loc);
-                send_message(peer_socket, RES_LOCREG, res_req_loc_msg);
             }
                 
             break;
 
         case RES_LOCREG:
             int loc_id = atoi(strtok(msg->payload, ","));
+
+            send_message_with_int_payload(socket, RES_USRACCESS, loc_id);
+                
+            break;
+
+        case REQ_LOCLIST:
+            int uid_inspect = atoi(strtok(msg->payload, ","));
             client_loc = atoi(strtok(NULL, ","));
 
-            char res_loc_msg[BUFFER_SIZE];
-            snprintf(res_loc_msg, sizeof(res_loc_msg), "%d", loc_id);
-            send_message(clients_sockets[client_loc], RES_USRACCESS, res_loc_msg);
+            send_message_with_int_payload(peer_socket, REQ_USRAUTH, uid_inspect);
+            
+            Message msg_receive; 
+            msg_receive = read_message(peer_socket);
+            int payload_msg_receive = atoi(msg_receive.payload); 
+            if(payload_msg_receive == 1){
+                get_list_of_users(client_loc);
+            }
+
+            server_process_message(socket, &msg_receive);
+                
+            break;
+
+        case REQ_USRAUTH:
+            int uid_inspect_auth = atoi(strtok(msg->payload, ","));
+
+            int user_pos_inspect = user_exists_and_pos(uid_inspect_auth);
+            if(user_pos_inspect != NOT_SET_NUMBER){
+                if(user_special[user_pos_inspect])
+                    send_message_with_int_payload(socket, RES_USRAUTH, 1);
+                else
+                    send_message_with_int_payload(socket, RES_USRAUTH, 0);
+            }
+            else{
+                send_message(socket, ERROR, "18");
+            }
+               
+            break;
+
+        case RES_USRAUTH:
+            int is_special = atoi(strtok(msg->payload, ","));
+            if(!is_special)
+                send_message(socket, ERROR, "19");
+            else
+                send_message(socket, RES_LOCLIST, list_of_users);
+
                 
             break;
 
@@ -310,35 +368,22 @@ void accept_new_client(int socket) {
     server_process_message(new_client_socket, &msg);
 }
 
-void handle_client_messages(int fd) {
-    Message msg;
-    int valread = read(fd, &msg, sizeof(msg));
-    if (valread == 0) {
-        printf("Client %d disconnected\n", clients_loc_and_id[fd]);
-        client_remove(fd);
-    } else {
-        server_process_message(fd, &msg);
-    }
-}
-
 void handle_peer_connection(int peer_port, int *peer_socket) {
-    if (peer_state == DISC) {
-        // Try active connection
-        if (create_active_connection(peer_port, *peer_socket) == 0) {
-            peer_state = CONN;
-            send_message(*peer_socket, REQ_CONNPEER, "");
-        } else {
-            // Fallback to passive connection
+    // Try active connection
+    if (create_active_connection(peer_port, *peer_socket) == 0) {
+        peer_state = CONN;
+        send_message(*peer_socket, REQ_CONNPEER, "");
+    } else {
+        // Fallback to passive connection
+        close(*peer_socket);
+
+        *peer_socket = create_socket(peer_port,0);
+        int new_socket = create_passive_connection(peer_port, *peer_socket);
+        if (new_socket >= 0) {
             close(*peer_socket);
+            *peer_socket = new_socket;
+            peer_state = CONN;
 
-            *peer_socket = create_socket(peer_port,0);
-            int new_socket = create_passive_connection(peer_port, *peer_socket);
-            if (new_socket >= 0) {
-                close(*peer_socket);
-                *peer_socket = new_socket;
-                peer_state = CONN;
-
-            }
         }
     }
 }
@@ -348,6 +393,12 @@ int create_socket(int port, int client){
     
     if ((sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
         error("Socket creation failed");
+
+    int opt = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0){
+        close(sock);
+        error("setsockopt failed");
+    }
 
     if(client){
         struct sockaddr_in server_addr;
@@ -364,7 +415,6 @@ int create_socket(int port, int client){
             error("Listen failed");
     }
     
-    printf("debbuger: SOCK no CREATE: %d\n", sock);
     return sock;
 }
 
@@ -376,6 +426,12 @@ int create_passive_connection(int port, int socket){
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
     server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    int opt = 1;
+    if (setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0){
+        close(socket);
+        error("setsockopt failed");
+    }
 
     if (bind(socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0){
         close(socket);
@@ -399,11 +455,10 @@ int create_passive_connection(int port, int socket){
 int create_active_connection(int port, int socket){
     struct sockaddr_in server_addr;
 
-    printf("debbuger: port %d socket %d\n", port, socket);
-
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
 
     if (connect(socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0){
         perror("Connection failed");
@@ -433,8 +488,6 @@ int main(int argc, char *argv[]) {
     peer_state = DISC;
     fd_set read_fds;
     while (1) {
-        handle_peer_connection(peer_port, &peer_socket);
-        
         if(peer_state == CONN){
             FD_ZERO(&read_fds);
             FD_SET(client_socket, &read_fds);
@@ -486,11 +539,15 @@ int main(int argc, char *argv[]) {
 
                     } else {
                         // Mensagens de clientes conectados
-                        handle_client_messages(fd);
+                        Message msg = read_message(peer_socket);
+                        server_process_message(fd, &msg);
 
                     }
                 }
             }
+        }
+        else {
+            handle_peer_connection(peer_port, &peer_socket);
         }
     }
 

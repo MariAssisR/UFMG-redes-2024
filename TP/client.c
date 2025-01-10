@@ -1,8 +1,8 @@
 #include "common.h"
 
 int location_id;
-int client_user_id;
-int client_loc_id;
+int client_user_id = -1;
+int client_loc_id = -1;
 
 void client_process_message(Message *msg) {
     switch (msg->code) {
@@ -14,13 +14,13 @@ void client_process_message(Message *msg) {
                     printf("Successful disconnect\n");
                     break;
                 case 2:
-                    printf("Successful create\n");
+                    printf("New user added: ");
                     break;
                 case 3:
-                    printf("Successful update\n");
+                    printf("User updated: ");
                     break;
                 default: 
-                    printf("Mensagem OK recebida: %s\n", msg->payload);
+                    printf("OK message received in client: %s\n", msg->payload);
                     break;
             }
         }
@@ -52,20 +52,37 @@ void client_process_message(Message *msg) {
                     printf("Permission denied\n");
                     break;
                 default: 
-                    printf("Mensagem de erro recebida: %s\n", msg->payload);
+                    printf("ERROR message received in client: %s\n", msg->payload);
                     break;
             }
         }
             break;
 
         case RES_CONN:
-            //printf("Mensagem RES_CONN: %s\n", msg->payload);
+            int client_id = atoi(msg->payload);
+            if(client_user_id == -1){
+                printf("SU New ID: %d\n", client_id);
+                client_user_id = client_id;
+            }
+            else {
+                printf("SL New ID: %d\n", client_id);
+                client_loc_id = client_id;
+            }
             break;
         
+        case RES_USRLOC:
+            int current_loc_id = atoi(msg->payload);
+            printf("Current location: %d\n", current_loc_id);
+            break;
+
         case RES_USRACCESS:
-            printf("AQUI \n");
             int loc_id = atoi(msg->payload);
             printf("OK, Last location: %d\n", loc_id);
+            break;
+
+        case RES_LOCLIST:
+            char* loc_list = msg->payload;
+            printf(" List of people at the specified location:: %s\n", loc_list);
             break;
 
         default:
@@ -102,25 +119,19 @@ void handle_initial_registration(int user_socket, int location_socket) {
     
     Message location_msg = read_message(location_socket);
     client_process_message(&location_msg);
-
-    printf("SU New ID: %s\n", user_msg.payload);
-    printf("SL New ID: %s\n", location_msg.payload);
-    client_user_id = atoi(user_msg.payload);
-    client_loc_id = atoi(location_msg.payload);
 }
 
 void handle_command_loop(int user_socket, int location_socket) {
     Message msg; 
     Message response_msg; 
+    Message msg_to_send;
 
     while (1) {
         memset(&msg, 0, sizeof(msg));
 
-        printf("> ");
-        if (fgets(msg.payload, sizeof(msg.payload), stdin) == NULL) {
-            perror("Erro ao ler entrada");
-            break;
-        }
+        fprintf(stderr, "> ");
+        if (fgets(msg.payload, sizeof(msg.payload), stdin) == NULL) 
+            continue;
         msg.payload[strcspn(msg.payload, "\n")] = '\0';
         msg.code = 1;
 
@@ -136,7 +147,7 @@ void handle_command_loop(int user_socket, int location_socket) {
         strcmp( command, "out") != 0 && 
         strcmp( command, "inspect") != 0)
         {
-            printf("Wrong command, options: kill, add, find, in, out, inspect\n");
+            fprintf(stderr, "Wrong command, options: kill, add, find, in, out, inspect\n");
             continue;
         }
 
@@ -144,9 +155,6 @@ void handle_command_loop(int user_socket, int location_socket) {
         char *sockets_name[] = {"SU", "SL"};
         int locs[] = {client_user_id, client_loc_id};
         for (int i = 0; i < 2; i++) {
-            Message msg_to_send = msg;
-            memset(&response_msg, 0, sizeof(response_msg));
-                
             if (strcmp(command, "kill") == 0) {
                 send_message_with_int_payload(sockets[i], REQ_DISC, locs[i]);
                 
@@ -165,11 +173,11 @@ void handle_command_loop(int user_socket, int location_socket) {
                 char uid[11];
                 int number;
                 if (payload == NULL || sscanf(payload, "%10s %d", uid, &number) != 2) {
-                    printf("Comando 'add' requer um UID de 10 dígitos e um número inteiro. Exemplo: add 2021808080 42\n");
+                    fprintf(stderr, "The 'add' command requires a 10-digit UID and an boolean value. Example: add 2021808080 0\n");
                     continue;
                 }
                 if (strlen(uid) != 10 || strspn(uid, "0123456789") != 10) {
-                    printf("UID inválido. Deve conter exatamente 10 dígitos numéricos.\n");
+                    fprintf(stderr, "Invalid UID. Must contain exactly 10 numeric digits.\n");
                     continue;
                 }
                 snprintf(msg_to_send.payload, sizeof(msg_to_send.payload), "%s,%d", uid, number);
@@ -178,20 +186,18 @@ void handle_command_loop(int user_socket, int location_socket) {
                 response_msg = read_message(sockets[i]);
                 client_process_message(&response_msg);
 
-                continue;
-                
+                if(response_msg.code != ERROR)
+                    printf("%s\n",uid);
             }
             else if (strcmp(command, "find") == 0) {
                 if (i == 0)
                     continue;
 
                 if (payload == NULL || strlen(payload) != 10 || strspn(payload, "0123456789") != 10) {
-                    printf("Comando 'find' requer um UID de 10 dígitos numéricos. Exemplo: find 2021808080\n");
+                    fprintf(stderr, "The 'find' command requires a 10-digit UID. Example: find 2021808080\n");
                     continue;
                 }
-                strncpy(msg_to_send.payload, payload, sizeof(msg_to_send.payload) - 1);
-                msg_to_send.payload[sizeof(msg_to_send.payload) - 1] = '\0';
-
+                snprintf(msg_to_send.payload, sizeof(msg_to_send.payload), "%s", payload);
                 
                 send_message(sockets[i], REQ_USRLOC, msg_to_send.payload);
                 response_msg = read_message(sockets[i]);
@@ -202,7 +208,7 @@ void handle_command_loop(int user_socket, int location_socket) {
                     continue;
                 
                 if (payload == NULL || strlen(payload) != 10 || strspn(payload, "0123456789") != 10) {
-                    printf("Comando 'in' requer um UID de 10 dígitos numéricos. Exemplo: in 2021808080\n");
+                    fprintf(stderr, "The 'in' command requires a 10-digit UID. Example: in 2021808080\n");
                     continue;
                 }
                 snprintf(msg_to_send.payload, sizeof(msg_to_send.payload), "%s,in,%d", payload,location_id);
@@ -216,7 +222,7 @@ void handle_command_loop(int user_socket, int location_socket) {
                     continue;
                 
                 if (payload == NULL || strlen(payload) != 10 || strspn(payload, "0123456789") != 10) {
-                    printf("Comando 'out' requer um UID de 10 dígitos numéricos. Exemplo: out 2021808080\n");
+                    fprintf(stderr, "The 'out' command requires a 10-digit UID. Example: out 2021808080\n");
                     continue;
                 }
                 snprintf(msg_to_send.payload, sizeof(msg_to_send.payload), "%s,out,%d", payload,location_id);
@@ -226,16 +232,23 @@ void handle_command_loop(int user_socket, int location_socket) {
                 client_process_message(&response_msg);
             }
             else if (strcmp(command, "inspect") == 0) {
-                //DEIXA ASSIM POR ENQUANTO!
-                send_message(sockets[i], msg_to_send.code, msg_to_send.payload);
+                if(i == 0)
+                    continue;
 
-                memset(&response_msg, 0, sizeof(response_msg));
-                int valread = read(sockets[i], &response_msg, sizeof(response_msg));
-                if (valread <= 0) {
-                    perror("Error on read client message");
-                    close(sockets[i]);
-                    return;
+                char uid[11];
+                int locId;
+                if (payload == NULL || sscanf(payload, "%10s %d", uid, &locId) != 2) {
+                    fprintf(stderr, "The 'inspect' command requires a 10-digit UID and a location id. Example: inspect 2021808080 2\n");
+                    continue;
                 }
+                if (strlen(uid) != 10 || strspn(uid, "0123456789") != 10) {
+                    fprintf(stderr, "Invalid UID. Must contain exactly 10 numeric digits.\n");
+                    continue;
+                }
+                snprintf(msg_to_send.payload, sizeof(msg_to_send.payload), "%s,%d", uid, locId);
+
+                send_message(sockets[i], REQ_LOCLIST, msg_to_send.payload);
+                response_msg = read_message(sockets[i]);
                 client_process_message(&response_msg);
             }
         }
@@ -256,17 +269,13 @@ int main(int argc, char *argv[]) {
     if (location_id < 1 || location_id > 10)
         error("Invalid argument\n");
 
-    // Connect to servers
     int user_socket = connect_to_server(server_ip, user_server_port);
     int location_socket = connect_to_server(server_ip, location_server_port);
 
-    // Register client to servers
     handle_initial_registration(user_socket, location_socket);
 
-    // Loop for commands
     handle_command_loop(user_socket, location_socket);
 
-    // Fechar conexões
     close(user_socket);
     close(location_socket);
 
