@@ -20,7 +20,7 @@ void client_process_message(Message *msg) {
                     printf("User updated: ");
                     break;
                 default: 
-                    printf("OK message received in client: %s\n", msg->payload);
+                    fprintf(stderr, "OK message received in client: %s\n", msg->payload);
                     break;
             }
         }
@@ -52,7 +52,7 @@ void client_process_message(Message *msg) {
                     printf("Permission denied\n");
                     break;
                 default: 
-                    printf("ERROR message received in client: %s\n", msg->payload);
+                    fprintf(stderr, "ERROR message received in client: %s\n", msg->payload);
                     break;
             }
         }
@@ -82,12 +82,12 @@ void client_process_message(Message *msg) {
 
         case RES_LOCLIST:
             char* loc_list = msg->payload;
-            printf(" List of people at the specified location:: %s\n", loc_list);
+            printf(" List of people at the specified location: %s\n", loc_list);
             break;
 
         default:
             // Caso a mensagem tenha um código desconhecido
-            printf("Mensagem desconhecida recebida: %s\n", msg->payload);
+            fprintf(stderr, "Message with unknow code in client: %s\n", msg->payload);
             break;
     }
 }
@@ -129,7 +129,7 @@ void handle_command_loop(int user_socket, int location_socket) {
     while (1) {
         memset(&msg, 0, sizeof(msg));
 
-        fprintf(stderr, "> ");
+        //fprintf(stderr, "> ");
         if (fgets(msg.payload, sizeof(msg.payload), stdin) == NULL) 
             continue;
         msg.payload[strcspn(msg.payload, "\n")] = '\0';
