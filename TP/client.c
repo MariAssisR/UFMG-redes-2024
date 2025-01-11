@@ -94,15 +94,20 @@ void client_process_message(Message *msg) {
 
 int connect_to_server(const char *server_ip, int port) {
     int socket_fd;
-    struct sockaddr_in server_addr;
+    struct sockaddr_storage server_addr;
 
-    if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    if (configure_ip_address(server_ip, port, &server_addr) != 0)
+        error("Failed to configure server address");
+
+    if (server_addr.ss_family == AF_INET) 
+        socket_fd = socket(AF_INET, SOCK_STREAM, 0);
+    else if (server_addr.ss_family == AF_INET6)
+        socket_fd = socket(AF_INET6, SOCK_STREAM, 0);
+    else
+        error("Unsupported address family");
+
+    if (socket_fd < 0)
         error("Socket creation failed");
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0)
-        error("Invalid address");
 
     if (connect(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
         error("Connection failed");

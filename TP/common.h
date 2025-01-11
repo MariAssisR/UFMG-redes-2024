@@ -44,6 +44,7 @@ typedef struct {
 } Message;
 
 void error(const char *msg);
+int configure_ip_address(const char *ip, uint16_t port, struct sockaddr_storage *result);
 void send_message_with_int_payload(int socket, int code, int payload);
 void send_message(int socket, int code, const char *payload);
 Message read_message(int socket);

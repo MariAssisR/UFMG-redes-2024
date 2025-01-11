@@ -352,7 +352,7 @@ void server_process_message(int socket, Message *msg) {
 }
 
 void accept_new_client(int socket) {
-    struct sockaddr_in client_addr;
+    struct sockaddr_storage client_addr;
     socklen_t addrlen = sizeof(client_addr);
     int new_client_socket = accept(socket, (struct sockaddr *)&client_addr, &addrlen);
 
@@ -373,7 +373,7 @@ void accept_new_client(int socket) {
 }
 
 void accept_new_peer(int socket) {
-    struct sockaddr_in client_addr;
+    struct sockaddr_storage client_addr;
     socklen_t addrlen = sizeof(client_addr);
     int new_peer_socket = accept(socket, (struct sockaddr *)&client_addr, &addrlen);
 
@@ -402,20 +402,25 @@ void handle_peer_connection(int peer_port, int *peer_socket) {
 }
 
 void create_passive_connection(int port, int socket, int is_client){
-    struct sockaddr_in server_addr;
+    struct sockaddr_storage server_addr;
 
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    server_addr.sin_addr.s_addr = INADDR_ANY;
+    if (configure_ip_address("::", port, &server_addr) != 0) {
+        close(socket);
+        error("Failed to configure address for passive connection");
+    }
 
-    if (bind(socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0){
+    socklen_t addr_len = (server_addr.ss_family == AF_INET) ? 
+                         sizeof(struct sockaddr_in) : 
+                         sizeof(struct sockaddr_in6);
+
+    if (bind(socket, (struct sockaddr *)&server_addr, addr_len) < 0){
         close(socket);
         error("Bind failed");
     }
 
     if(!is_client)
         printf("No peer found, starting to listen...\n");
+
     if (listen(socket, MAX_CLIENTS) < 0) {
         close(socket);
         error("Listen failed");
@@ -423,14 +428,16 @@ void create_passive_connection(int port, int socket, int is_client){
 }
 
 int create_active_connection(int port, int socket){
-    struct sockaddr_in server_addr;
+    struct sockaddr_storage server_addr;
 
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    server_addr.sin_addr.s_addr = INADDR_ANY;
+    if (configure_ip_address("::", port, &server_addr) != 0)
+        error("Failed to configure address for passive connection");
 
-    if (connect(socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0){
+    socklen_t addr_len = (server_addr.ss_family == AF_INET) ? 
+                         sizeof(struct sockaddr_in) : 
+                         sizeof(struct sockaddr_in6);
+
+    if (connect(socket, (struct sockaddr*)&server_addr, addr_len) < 0){
         return -1;
     }
     return 0;
@@ -439,7 +446,7 @@ int create_active_connection(int port, int socket){
 int create_socket(){
     int sock;
     
-    if ((sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+    if ((sock = socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP)) < 0)
         error("Socket creation failed");
 
     int opt = 1;
