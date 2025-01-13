@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h> 
@@ -34,6 +35,9 @@
 #define ERROR         255
 #define OK            0
 
+#define MAX_CLIENTS 10
+#define MAX_USERS 30
+#define NOT_SET_NUMBER -10
 
 #define BUFFER_SIZE 500
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))

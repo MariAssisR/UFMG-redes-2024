@@ -1,17 +1,13 @@
 #include "common.h"
 
-#define MAX_CLIENTS 10
-#define MAX_USERS 30
-#define NOT_SET_NUMBER -10
+int clients_sockets[MAX_CLIENTS+1] = {[0 ... MAX_CLIENTS] = NOT_SET_NUMBER};      // pos é LOC, num é SOCKET
+int clients_loc_and_id[MAX_CLIENTS+1] = {[0 ... MAX_CLIENTS] = NOT_SET_NUMBER};   // pos é LOC, num é ID
+int client_id;                                                                    // ID do cliente inicial (aleatório)
+int client_count = 0;                                                             // Contador de clientes conectados
 
-int clients_sockets[MAX_CLIENTS] = {0};            // pos é LOC, num é SOCKET
-int clients_loc_and_id[MAX_CLIENTS] = {0};         // pos é LOC, num é ID
-int client_id;                                     // ID do cliente inicial (aleatório)
-int client_count = 0;                              // Contador de clientes conectados
-
-int user_ids[MAX_USERS] = {NOT_SET_NUMBER};                     // IDs dos usuários
-int user_special[MAX_USERS] = {NOT_SET_NUMBER};                 // 0 ou 1 (especialidade do usuário)
-int user_location[MAX_USERS] = {NOT_SET_NUMBER};                // Localização do usuário (de -1, 1 a 10)
+int64_t user_ids[MAX_USERS] = {[0 ... MAX_USERS-1] = NOT_SET_NUMBER};        // IDs dos usuários
+int user_special[MAX_USERS] = {[0 ... MAX_USERS-1] = NOT_SET_NUMBER};        // 0 ou 1 (especialidade do usuário)
+int user_location[MAX_USERS] = {[0 ... MAX_USERS-1] = NOT_SET_NUMBER};       // Localização do usuário (de -1, 1 a 10)
 int user_count = 0; 
 
 int peer_id = -1;                                       // ID do peer que vai ser conectado
@@ -35,7 +31,7 @@ int create_socket();
 int user_find_pos(){
     if(user_count < MAX_USERS){
         for (int i = 0; i < MAX_USERS; i++){
-            if (user_ids[i] == 0)
+            if (user_ids[i] == NOT_SET_NUMBER)
                 return i;
         }
     }
@@ -43,7 +39,7 @@ int user_find_pos(){
     return NOT_SET_NUMBER;
 }
 
-int user_exists_and_pos(int id){
+int user_exists_and_pos(int64_t id){
     for (int i = 0; i < MAX_USERS; i++){
         if (user_ids[i] == id)
             return i;
@@ -64,9 +60,9 @@ void get_list_of_users(int loc_id){
     }
 
     for(int i = 0; i < count; i++){
-        int user_id = user_ids[list_of_positions_in_array[i]];
+        int64_t user_id = user_ids[list_of_positions_in_array[i]];
         char user_id_str[12];
-        sprintf(user_id_str, "%d", user_id);
+        sprintf(user_id_str, "%ld", user_id);
         strcat(list_of_users, user_id_str);
         if (i < count - 1) {
             strcat(list_of_users, ",");
@@ -76,12 +72,21 @@ void get_list_of_users(int loc_id){
 }
 
 int client_exists_and_pos(int id){
-    for (int i = 0; i < MAX_CLIENTS; i++){
+    for (int i = 0; i < MAX_CLIENTS+1; i++){
         if (clients_loc_and_id[i] == id)
             return i;
     }
     return NOT_SET_NUMBER;
 }
+
+int client_get_locId_by_socket(int sock){
+    for (int i = 0; i < MAX_CLIENTS+1; i++){
+        if (clients_sockets[i] == sock)
+            return i;
+    }
+    return NOT_SET_NUMBER;
+}
+
 
 void client_remove(int loc_id){
     close(clients_sockets[loc_id]);
@@ -145,7 +150,6 @@ void server_process_message(int socket, Message *msg) {
                     fprintf(stderr, "ERROR message received in server: %s\n", msg->payload);
                     break;
             }
-            exit(EXIT_FAILURE);
         }
             break;
 
@@ -209,8 +213,10 @@ void server_process_message(int socket, Message *msg) {
             digit = atoi(msg->payload); 
             client_loc = client_exists_and_pos(digit);
             if(client_loc != NOT_SET_NUMBER){
-                printf("Client %d removed (Loc %d)\n", digit, client_loc);
-                send_message(socket, OK, "1");
+                if(peer_id != -1){
+                    printf("Client %d removed (Loc %d)\n", digit, client_loc);
+                    send_message(socket, OK, "1");
+                }
                 client_remove(client_loc);
             }
             else{
@@ -219,8 +225,9 @@ void server_process_message(int socket, Message *msg) {
             break;
 
         case REQ_USRADD:
-            int uid_add = atoi(strtok(msg->payload, ","));
+            int64_t uid_add = strtoll(strtok(msg->payload, ","), NULL, 10);
             digit = atoi(strtok(NULL, ","));
+            printf("REQ_USRADD %ld %d\n", uid_add, digit);
 
             int user_pos_add = user_exists_and_pos(uid_add);
             if(user_pos_add != NOT_SET_NUMBER){
@@ -240,9 +247,10 @@ void server_process_message(int socket, Message *msg) {
             break;
             
         case REQ_USRLOC:
-            int uid_find = atoi(msg->payload);
-            int user_pos_find = user_exists_and_pos(uid_find);
+            int64_t uid_find = strtoll(strtok(msg->payload, ","), NULL, 10);
+            printf("REQ_USRLOC %ld\n", uid_find);
 
+            int user_pos_find = user_exists_and_pos(uid_find);
             if(user_pos_find != NOT_SET_NUMBER){
                 send_message_with_int_payload(socket, RES_USRLOC, user_location[user_pos_find]);
             }
@@ -252,10 +260,11 @@ void server_process_message(int socket, Message *msg) {
             break;
 
         case REQ_USRACCESS:
-            int uid_access = atoi(strtok(msg->payload, ","));
+            int64_t uid_access = strtoll(strtok(msg->payload, ","), NULL, 10);
             char* direction = strtok(NULL, ",");
-            client_loc = atoi(strtok(NULL, ","));
+            printf("REQ_USRACCESS %ld %s\n", uid_access, direction);
 
+            client_loc = client_get_locId_by_socket(socket);
             int user_pos_access = user_exists_and_pos(uid_access);
             if(user_pos_access != NOT_SET_NUMBER){
                 int locId = -1;
@@ -263,8 +272,7 @@ void server_process_message(int socket, Message *msg) {
                     locId = client_loc;
 
                 char res_access_msg[BUFFER_SIZE];
-                snprintf(res_access_msg, sizeof(res_access_msg), "%d,%d", uid_access, locId);
-
+                snprintf(res_access_msg, sizeof(res_access_msg), "%ld,%d", uid_access, locId);
                 send_message(peer_socket, REQ_LOCREG, res_access_msg);
 
                 Message msg_receive; 
@@ -277,12 +285,13 @@ void server_process_message(int socket, Message *msg) {
             break;
 
         case REQ_LOCREG:
-            int uid_loc = atoi(strtok(msg->payload, ","));
+            int64_t uid_loc = strtoll(strtok(msg->payload, ","), NULL, 10);
             int loc = atoi(strtok(NULL, ","));
+            printf("REQ_LOCREG %ld %d\n", uid_loc, loc);
 
             int user_pos_loc = user_exists_and_pos(uid_loc);
             if(user_pos_loc == NOT_SET_NUMBER){   
-                int new_user_pos_loc = user_find_pos(uid_loc);
+                int new_user_pos_loc = user_find_pos();
                 user_ids[new_user_pos_loc] = uid_loc;
                 user_location[new_user_pos_loc] = loc;
                 send_message(socket, RES_LOCREG, "-1");
@@ -302,10 +311,11 @@ void server_process_message(int socket, Message *msg) {
             break;
 
         case REQ_LOCLIST:
-            int uid_inspect = atoi(strtok(msg->payload, ","));
+            char *uid_inspect = strtok(msg->payload, ",");
             client_loc = atoi(strtok(NULL, ","));
+            printf("REQ_LOCLIST %s %d\n", uid_inspect, client_loc);
 
-            send_message_with_int_payload(peer_socket, REQ_USRAUTH, uid_inspect);
+            send_message(peer_socket, REQ_USRAUTH, uid_inspect);
             
             Message msg_receive; 
             msg_receive = read_message(peer_socket);
@@ -319,7 +329,8 @@ void server_process_message(int socket, Message *msg) {
             break;
 
         case REQ_USRAUTH:
-            int uid_inspect_auth = atoi(strtok(msg->payload, ","));
+            int64_t uid_inspect_auth = strtoll(strtok(msg->payload, ","), NULL, 10);
+            printf("REQ_LOCLIST %ld\n", uid_inspect_auth);
 
             int user_pos_inspect = user_exists_and_pos(uid_inspect_auth);
             if(user_pos_inspect != NOT_SET_NUMBER){
@@ -329,7 +340,7 @@ void server_process_message(int socket, Message *msg) {
                     send_message_with_int_payload(socket, RES_USRAUTH, 0);
             }
             else{
-                send_message(socket, ERROR, "18");
+                send_message_with_int_payload(socket, RES_USRAUTH, 0);
             }
                
             break;
@@ -490,7 +501,7 @@ int main(int argc, char *argv[]) {
             int max_fd = MAX(MAX(client_socket, peer_socket), STDIN_FILENO);
 
             // Add active clients to the fd_set
-            for (int i = 0; i < MAX_CLIENTS; i++) {
+            for (int i = 0; i < MAX_CLIENTS+1; i++) {
                 int fd = clients_sockets[i];
                 if (fd > 0) {
                     FD_SET(fd, &read_fds);
