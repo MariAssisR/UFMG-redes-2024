@@ -281,7 +281,6 @@ void handle_command_loop(int user_socket, int location_socket) {
             int bytes_received = recv(user_socket, buffer, BUFFER_SIZE, 0);
             if(bytes_received == 0){
                 fprintf(stderr, "User server has been disconnected. Shutting down...\n");
-                send_message_with_int_payload(location_socket, REQ_DISC, client_loc_id);
                 close(location_socket);
                 close(user_socket);
                 exit(EXIT_SUCCESS);
@@ -292,9 +291,8 @@ void handle_command_loop(int user_socket, int location_socket) {
             int bytes_received = recv(location_socket, buffer, BUFFER_SIZE, 0);
             if(bytes_received == 0){
                 fprintf(stderr, "Location server has been disconnected. Shutting down...\n");
-                send_message_with_int_payload(user_socket, REQ_DISC, client_loc_id);
-                close(location_socket);
                 close(user_socket);
+                close(location_socket);
                 exit(EXIT_SUCCESS);
             }
         }

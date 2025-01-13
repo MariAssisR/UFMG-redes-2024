@@ -105,8 +105,9 @@ void server_process_message(int socket, Message *msg) {
                 case 1:
                     printf("Successful disconnect\n");
                     printf("Peer %d disconnect\n", peer_id);
+                    close(client_socket);
                     close(peer_socket);
-                    exit(EXIT_FAILURE);
+                    exit(EXIT_SUCCESS);
                     break;
                 case 2:
                     printf("Successful create\n");
@@ -127,6 +128,9 @@ void server_process_message(int socket, Message *msg) {
             switch (digit) {
                 case 1:
                     printf("Peer limit exceeded\n");
+                    close(client_socket);
+                    close(peer_socket);
+                    exit(EXIT_SUCCESS);
                     break;
                 case 2:
                     printf("Peer not found\n");
@@ -189,6 +193,10 @@ void server_process_message(int socket, Message *msg) {
                 close(passive_peer_socket);
                 close(peer_socket);
                 passive_peer_socket = -1;
+                for(int i = 0; i <= MAX_CLIENTS; i++){
+                    if(clients_sockets[i] != NOT_SET_NUMBER)
+                        client_remove(clients_sockets[i]);
+                }
                 sleep(1);
             }
             else 
@@ -330,7 +338,7 @@ void server_process_message(int socket, Message *msg) {
 
         case REQ_USRAUTH:
             int64_t uid_inspect_auth = strtoll(strtok(msg->payload, ","), NULL, 10);
-            printf("REQ_LOCLIST %ld\n", uid_inspect_auth);
+            printf("REQ_USRAUTH %ld\n", uid_inspect_auth);
 
             int user_pos_inspect = user_exists_and_pos(uid_inspect_auth);
             if(user_pos_inspect != NOT_SET_NUMBER){
@@ -546,9 +554,10 @@ int main(int argc, char *argv[]) {
 
                     } else {
                         // Mensagens de clientes conectados
-                        Message msg = read_message(fd);
-                        server_process_message(fd, &msg);
-
+                        if(peer_id != -1){
+                            Message msg = read_message(fd);
+                            server_process_message(fd, &msg);
+                        }
                     }
                 }
             }
