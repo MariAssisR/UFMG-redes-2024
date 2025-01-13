@@ -243,8 +243,10 @@ void server_process_message(int socket, Message *msg) {
                 send_message(socket, OK, "03");
             }
             else{
-                if(user_count >= MAX_USERS)
+                if(user_count >= MAX_USERS){
                     send_message(socket, ERROR, "17");
+                    break;
+                }
 
                 int user_new_pos_add = user_find_pos();
                 user_ids[user_new_pos_add] = uid_add;

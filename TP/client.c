@@ -38,6 +38,7 @@ void client_process_message(Message *msg) {
                     break;
                 case 9:
                     printf("Client limit exceeded\n");
+                    close(EXIT_FAILURE);
                     break;
                 case 10:
                     printf("Client not found\n");
@@ -280,7 +281,6 @@ void handle_command_loop(int user_socket, int location_socket) {
             char buffer[BUFFER_SIZE];
             int bytes_received = recv(user_socket, buffer, BUFFER_SIZE, 0);
             if(bytes_received == 0){
-                fprintf(stderr, "User server has been disconnected. Shutting down...\n");
                 close(location_socket);
                 close(user_socket);
                 exit(EXIT_SUCCESS);
@@ -290,7 +290,6 @@ void handle_command_loop(int user_socket, int location_socket) {
             char buffer[BUFFER_SIZE];
             int bytes_received = recv(location_socket, buffer, BUFFER_SIZE, 0);
             if(bytes_received == 0){
-                fprintf(stderr, "Location server has been disconnected. Shutting down...\n");
                 close(user_socket);
                 close(location_socket);
                 exit(EXIT_SUCCESS);
