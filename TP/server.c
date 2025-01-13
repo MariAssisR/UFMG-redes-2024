@@ -90,8 +90,8 @@ int client_get_locId_by_socket(int sock){
 
 void client_remove(int loc_id){
     close(clients_sockets[loc_id]);
-    clients_sockets[loc_id] = 0;
-    clients_loc_and_id[loc_id] = 0;
+    clients_sockets[loc_id] = NOT_SET_NUMBER;
+    clients_loc_and_id[loc_id] = NOT_SET_NUMBER;
     client_count--;
 }
 
@@ -130,6 +130,8 @@ void server_process_message(int socket, Message *msg) {
                     printf("Peer limit exceeded\n");
                     close(client_socket);
                     close(peer_socket);
+                    if(passive_peer_socket != -1)
+                        close(passive_peer_socket);
                     exit(EXIT_SUCCESS);
                     break;
                 case 2:
@@ -190,12 +192,15 @@ void server_process_message(int socket, Message *msg) {
                 peer_id = -1;
                 this_peer_id = -1;
                 peer_state = DISC;
-                close(passive_peer_socket);
+                
+                if(passive_peer_socket != -1)
+                    close(passive_peer_socket);
                 close(peer_socket);
+                
                 passive_peer_socket = -1;
                 for(int i = 0; i <= MAX_CLIENTS; i++){
                     if(clients_sockets[i] != NOT_SET_NUMBER)
-                        client_remove(clients_sockets[i]);
+                        client_remove(i);
                 }
                 sleep(1);
             }
@@ -410,8 +415,8 @@ void accept_new_peer(int socket) {
 void handle_peer_connection(int peer_port, int *peer_socket) {
     // Try active connection
     if (create_active_connection(peer_port, *peer_socket) == 0) {
-        peer_state = CONN;
         send_message(*peer_socket, REQ_CONNPEER, "");
+        peer_state = CONN;
     } else {
         // Fallback to passive connection
         close(*peer_socket);
@@ -556,7 +561,7 @@ int main(int argc, char *argv[]) {
 
                     } else {
                         // Mensagens de clientes conectados
-                        if(peer_id != -1){
+                        if(peer_id != -1 && this_peer_id != -1){
                             Message msg = read_message(fd);
                             server_process_message(fd, &msg);
                         }

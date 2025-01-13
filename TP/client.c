@@ -83,7 +83,7 @@ void client_process_message(Message *msg) {
 
         case RES_LOCLIST:
             char* loc_list = msg->payload;
-            printf(" List of people at the specified location: %s\n", loc_list);
+            printf("List of people at the specified location: %s\n", loc_list);
             break;
 
         default:
@@ -153,10 +153,12 @@ void handle_command_loop(int user_socket, int location_socket) {
             msg.payload[strcspn(msg.payload, "\n")] = '\0';
             msg.code = 1;
 
-            char *command = strtok(msg.payload, " ");
-            char *payload = command ? command + strlen(command) + 1 : NULL;
-            if (payload && payload[0] == ' ')
-                payload++;
+            char command[20] = {0};
+            char payload[256] = {0};
+            if (sscanf(msg.payload, "%19s %[^\n]", command, payload) < 1) {
+                fprintf(stderr, "Invalid input format. Please enter a command.\n");
+                continue;
+            }
 
             if (strcmp( command, "kill") != 0 && 
             strcmp( command, "add") != 0 &&
@@ -174,6 +176,15 @@ void handle_command_loop(int user_socket, int location_socket) {
             int locs[] = {client_user_id, client_loc_id};
             for (int i = 0; i < 2; i++) {
                 if (strcmp(command, "kill") == 0) {
+                    
+                    char extra[256];
+                    if (sscanf(payload, "%255s", extra) > 0){
+                        fprintf(stderr, "The 'kill' command requires none argument\n");
+                        continue;
+                    }
+                    if(i == 1)
+                        continue;
+
                     send_message_with_int_payload(sockets[i], REQ_DISC, locs[i]);
                     
                     response_msg = read_message(sockets[i]);
@@ -190,7 +201,8 @@ void handle_command_loop(int user_socket, int location_socket) {
 
                     char uid[11];
                     char number_str[2];
-                    if (payload == NULL || sscanf(payload, "%10s %1s", uid, number_str) != 2) {
+                    char extra[256];
+                    if (payload == NULL || sscanf(payload, "%10s %1s %255s", uid, number_str, extra) != 2) {
                         fprintf(stderr, "The 'add' command requires a 10-digit UID and an boolean value. Example: add 2021808080 0\n");
                         continue;
                     }
@@ -259,9 +271,10 @@ void handle_command_loop(int user_socket, int location_socket) {
                     if(i == 0)
                         continue;
 
+                    char extra[256];
                     char uid[11];
                     int locId;
-                    if (payload == NULL || sscanf(payload, "%10s %d", uid, &locId) != 2) {
+                    if (payload == NULL || sscanf(payload, "%10s %d %255s", uid, &locId, extra) != 2) {
                         fprintf(stderr, "The 'inspect' command requires a 10-digit UID and a location id. Example: inspect 2021808080 2\n");
                         continue;
                     }
@@ -310,8 +323,10 @@ int main(int argc, char *argv[]) {
     int location_server_port = atoi(argv[3]);
     location_id = atoi(argv[4]);
 
-    if (location_id < 1 || location_id > 10)
-        error("Invalid argument\n");
+    if (location_id < 1 || location_id > 10){
+        printf("Invalid argument\n");
+        exit(EXIT_FAILURE);
+    }
 
     int user_socket = connect_to_server(server_ip, user_server_port);
     int location_socket = connect_to_server(server_ip, location_server_port);
